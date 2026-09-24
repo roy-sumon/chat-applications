@@ -103,12 +103,14 @@ export function ChatContainer({
   // WebRTC Call Signaling sender
   const handleSendCallSignal = useCallback(
     async (payload: {
-      action: "offer" | "answer" | "ice-candidate" | "reject" | "end";
+      action: "offer" | "answer" | "ice-candidate" | "reject" | "missed" | "end";
       targetUserId: string;
       callType?: "AUDIO" | "VIDEO";
       sdp?: RTCSessionDescriptionInit;
       candidate?: RTCIceCandidateInit;
       reason?: string;
+      duration?: number;
+      wasConnected?: boolean;
     }) => {
       const convId = callConversationId || selectedConversationId;
       if (!convId) return;
@@ -163,6 +165,7 @@ export function ChatContainer({
       await handleSendCallSignal({
         action: "reject",
         targetUserId: callingTarget.id,
+        callType: activeCallType,
         reason: "Call declined",
       });
     }
@@ -172,22 +175,31 @@ export function ChatContainer({
     setRemoteAnswerSdp(null);
     setPendingIceCandidate(null);
     setCallConversationId(null);
-  }, [callingTarget, callConversationId, selectedConversationId, handleSendCallSignal]);
+  }, [callingTarget, callConversationId, selectedConversationId, activeCallType, handleSendCallSignal]);
 
-  const handleEndCall = useCallback(async () => {
-    if (callingTarget && (callConversationId || selectedConversationId)) {
-      await handleSendCallSignal({
-        action: "end",
-        targetUserId: callingTarget.id,
-      });
-    }
-    setCallStatus("idle");
-    setCallingTarget(null);
-    setIncomingOfferSdp(null);
-    setRemoteAnswerSdp(null);
-    setPendingIceCandidate(null);
-    setCallConversationId(null);
-  }, [callingTarget, callConversationId, selectedConversationId, handleSendCallSignal]);
+  const handleEndCall = useCallback(
+    async (details?: { wasConnected: boolean; duration: number }) => {
+      const wasConn = details?.wasConnected ?? (callStatusRef.current === "connected");
+      const dur = details?.duration ?? 0;
+
+      if (callingTarget && (callConversationId || selectedConversationId)) {
+        await handleSendCallSignal({
+          action: "end",
+          targetUserId: callingTarget.id,
+          callType: activeCallType,
+          wasConnected: wasConn,
+          duration: dur,
+        });
+      }
+      setCallStatus("idle");
+      setCallingTarget(null);
+      setIncomingOfferSdp(null);
+      setRemoteAnswerSdp(null);
+      setPendingIceCandidate(null);
+      setCallConversationId(null);
+    },
+    [callingTarget, callConversationId, selectedConversationId, activeCallType, handleSendCallSignal]
+  );
 
   // 1. Mark messages as seen
   const markAsSeen = useCallback(
@@ -860,6 +872,7 @@ export function ChatContainer({
               onEdit={(msg) => setEditingMessage(msg)}
               onDelete={handleDeleteMessage}
               onReact={handleReaction}
+              onStartCall={handleStartCall}
             />
 
             <MessageInput
@@ -936,6 +949,7 @@ export function ChatContainer({
           otherUser={callingTarget}
           callType={activeCallType}
           callStatus={callStatus}
+          isOtherUserOnline={isUserOnline(callingTarget.id)}
           incomingOfferSdp={incomingOfferSdp}
           onAcceptIncoming={handleAcceptIncoming}
           onRejectIncoming={handleRejectIncoming}

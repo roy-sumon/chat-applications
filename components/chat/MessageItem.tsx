@@ -17,6 +17,11 @@ import {
   Download,
   Smile,
   Mic,
+  Phone,
+  PhoneMissed,
+  PhoneOff,
+  Video,
+  VideoOff,
 } from "lucide-react";
 
 interface MessageItemProps {
@@ -27,6 +32,7 @@ interface MessageItemProps {
   onEdit: (message: MessageWithDetails) => void;
   onDelete: (messageId: string) => void;
   onReact: (messageId: string, emoji: string) => void;
+  onStartCall?: (type: "AUDIO" | "VIDEO") => void;
   onImageClick?: (url: string) => void;
 }
 
@@ -40,6 +46,7 @@ function MessageItemComponent({
   onEdit,
   onDelete,
   onReact,
+  onStartCall,
   onImageClick,
 }: MessageItemProps) {
   const [showActions, setShowActions] = useState(false);
@@ -48,6 +55,107 @@ function MessageItemComponent({
   const isSelf = message.senderId === currentUserId;
   const isDeleted = Boolean(message.deletedAt);
   const isSystem = message.type === "SYSTEM";
+  const isCallMessage = message.content?.startsWith("CALL:");
+
+  if (isCallMessage) {
+    const parts = (message.content || "").split(":");
+    const callStatus = parts[1] || "MISSED"; // MISSED | DECLINED | ENDED
+    const callType = parts[2] === "VIDEO" ? "VIDEO" : "AUDIO";
+    const durationSec = Number(parts[3]) || 0;
+
+    const isMissed = callStatus === "MISSED";
+    const isDeclined = callStatus === "DECLINED";
+    const isEnded = callStatus === "ENDED";
+
+    let title = "";
+    if (isMissed) {
+      title = isSelf
+        ? `Outgoing ${callType === "VIDEO" ? "video" : "voice"} call`
+        : `Missed ${callType === "VIDEO" ? "video" : "voice"} call`;
+    } else if (isDeclined) {
+      title = isSelf
+        ? `Outgoing ${callType === "VIDEO" ? "video" : "voice"} call`
+        : `Declined ${callType === "VIDEO" ? "video" : "voice"} call`;
+    } else {
+      title = `${callType === "VIDEO" ? "Video" : "Voice"} call`;
+    }
+
+    let subtext = "";
+    if (isEnded) {
+      const mins = Math.floor(durationSec / 60);
+      const secs = durationSec % 60;
+      subtext = `${mins > 0 ? `${mins}m ` : ""}${secs}s · ${formatMessageTime(message.createdAt)}`;
+    } else if (isMissed) {
+      subtext = isSelf
+        ? `No answer · ${formatMessageTime(message.createdAt)}`
+        : `Missed · ${formatMessageTime(message.createdAt)}`;
+    } else {
+      subtext = `Declined · ${formatMessageTime(message.createdAt)}`;
+    }
+
+    return (
+      <div className={cn("flex my-2 select-none", isSelf ? "justify-end" : "justify-start")}>
+        <div
+          className={cn(
+            "flex items-center gap-3 px-4 py-3 rounded-2xl max-w-sm border backdrop-blur-md shadow-md transition",
+            isMissed && !isSelf
+              ? "bg-rose-950/40 border-rose-800/50 text-rose-200"
+              : isEnded
+              ? "bg-slate-900/90 border-slate-800 text-slate-200"
+              : "bg-slate-900/80 border-slate-800/80 text-slate-300"
+          )}
+        >
+          {/* Icon */}
+          <div
+            className={cn(
+              "w-10 h-10 rounded-full flex items-center justify-center shrink-0",
+              isMissed && !isSelf
+                ? "bg-rose-500/20 text-rose-400"
+                : isEnded
+                ? "bg-emerald-500/20 text-emerald-400"
+                : "bg-slate-800 text-slate-400"
+            )}
+          >
+            {callType === "VIDEO" ? (
+              isMissed && !isSelf ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />
+            ) : (
+              isMissed && !isSelf ? (
+                <PhoneMissed className="w-5 h-5" />
+              ) : isSelf && isMissed ? (
+                <PhoneOff className="w-5 h-5" />
+              ) : (
+                <Phone className="w-5 h-5" />
+              )
+            )}
+          </div>
+
+          {/* Details */}
+          <div className="flex-1 min-w-0">
+            <h5 className="text-xs font-semibold leading-tight truncate text-slate-100">{title}</h5>
+            <p className={cn("text-[11px] mt-0.5", isMissed && !isSelf ? "text-rose-400 font-medium" : "text-slate-400")}>
+              {subtext}
+            </p>
+          </div>
+
+          {/* Action Button: Call Back / Call Again */}
+          {onStartCall && (
+            <button
+              onClick={() => onStartCall(callType)}
+              className={cn(
+                "px-3 py-1.5 rounded-xl text-xs font-semibold shrink-0 transition active:scale-95 flex items-center gap-1.5",
+                isMissed && !isSelf
+                  ? "bg-rose-600 hover:bg-rose-500 text-white shadow-sm"
+                  : "bg-slate-800 hover:bg-slate-700 text-slate-200"
+              )}
+            >
+              {callType === "VIDEO" ? <Video className="w-3.5 h-3.5" /> : <Phone className="w-3.5 h-3.5" />}
+              <span>{isMissed && !isSelf ? "Call back" : "Call again"}</span>
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (isSystem) {
     return (

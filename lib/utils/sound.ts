@@ -141,6 +141,48 @@ export const startRingtone = (): (() => void) => {
   };
 };
 
+// Start distinct slow connecting tone when calling an offline recipient (WhatsApp / Messenger style)
+export const startOfflineRingtone = (): (() => void) => {
+  if (!isSoundEnabled()) return () => {};
+
+  let isPlaying = true;
+  let timer: NodeJS.Timeout | null = null;
+
+  const playOfflinePulse = () => {
+    if (!isPlaying) return;
+    try {
+      const ctx = getAudioContext();
+      if (!ctx) return;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(360, ctx.currentTime); // Low single connecting tone
+
+      gain.gain.setValueAtTime(0.045, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.35);
+
+      timer = setTimeout(playOfflinePulse, 2200);
+    } catch {
+      // ignore
+    }
+  };
+
+  playOfflinePulse();
+
+  return () => {
+    isPlaying = false;
+    if (timer) clearTimeout(timer);
+  };
+};
+
 // Play short phone hang-up sound
 export const playCallEndSound = (): void => {
   if (!isSoundEnabled()) return;

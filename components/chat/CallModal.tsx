@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import {
   startRingtone,
+  startOfflineRingtone,
   playCallConnectSound,
   playCallEndSound,
 } from "@/lib/utils/sound";
@@ -45,17 +46,20 @@ interface CallModalProps {
   };
   callType: "AUDIO" | "VIDEO";
   callStatus: CallStatus;
+  isOtherUserOnline?: boolean;
   incomingOfferSdp?: RTCSessionDescriptionInit | null;
   onAcceptIncoming: () => void;
   onRejectIncoming: () => void;
-  onEndCall: () => void;
+  onEndCall: (details?: { wasConnected: boolean; duration: number }) => void;
   onSendSignal: (payload: {
-    action: "offer" | "answer" | "ice-candidate" | "reject" | "end";
+    action: "offer" | "answer" | "ice-candidate" | "reject" | "end" | "missed";
     targetUserId: string;
     callType?: "AUDIO" | "VIDEO";
     sdp?: RTCSessionDescriptionInit;
     candidate?: RTCIceCandidateInit;
     reason?: string;
+    duration?: number;
+    wasConnected?: boolean;
   }) => Promise<void>;
   remoteAnswerSdp?: RTCSessionDescriptionInit | null;
   pendingIceCandidate?: RTCIceCandidateInit | null;
@@ -65,6 +69,7 @@ export function CallModal({
   otherUser,
   callType,
   callStatus,
+  isOtherUserOnline = false,
   incomingOfferSdp,
   onAcceptIncoming,
   onRejectIncoming,
@@ -90,8 +95,14 @@ export function CallModal({
 
   // 1. Ringtone for incoming / calling
   useEffect(() => {
-    if (callStatus === "incoming" || callStatus === "calling") {
+    if (callStatus === "incoming") {
       ringtoneStopRef.current = startRingtone();
+    } else if (callStatus === "calling") {
+      if (isOtherUserOnline) {
+        ringtoneStopRef.current = startRingtone();
+      } else {
+        ringtoneStopRef.current = startOfflineRingtone();
+      }
     } else {
       if (ringtoneStopRef.current) {
         ringtoneStopRef.current();
@@ -105,7 +116,7 @@ export function CallModal({
         ringtoneStopRef.current = null;
       }
     };
-  }, [callStatus]);
+  }, [callStatus, isOtherUserOnline]);
 
   // 2. Call duration timer when connected
   useEffect(() => {
@@ -356,11 +367,30 @@ export function CallModal({
   };
 
   // 10. End Call
-  const handleHangup = () => {
+  const handleHangup = useCallback(() => {
     playCallEndSound();
     cleanupStreams();
-    onEndCall();
-  };
+    const wasConnected = callStatus === "connected";
+    onEndCall({ wasConnected, duration: durationSeconds });
+  }, [callStatus, durationSeconds, cleanupStreams, onEndCall]);
+
+  // Auto-timeout for calling: 18s if offline, 40s if online
+  useEffect(() => {
+    if (callStatus !== "calling") return;
+
+    const timeoutLimit = isOtherUserOnline ? 40000 : 18000;
+    const timer = setTimeout(() => {
+      toast.info(
+        isOtherUserOnline
+          ? "No answer. Missed call logged."
+          : "User is offline. Missed call logged.",
+        "Call Ended"
+      );
+      handleHangup();
+    }, timeoutLimit);
+
+    return () => clearTimeout(timer);
+  }, [callStatus, isOtherUserOnline, handleHangup, toast]);
 
   if (callStatus === "idle") return null;
 
@@ -440,7 +470,11 @@ export function CallModal({
             <h4 className="text-sm font-bold text-white leading-tight">{otherUser.name}</h4>
             <p className="text-[11px] text-slate-400">
               {callStatus === "calling" ? (
-                <span className="text-amber-400 animate-pulse font-medium">Calling...</span>
+                isOtherUserOnline ? (
+                  <span className="text-emerald-400 animate-pulse font-medium">Ringing...</span>
+                ) : (
+                  <span className="text-amber-400 animate-pulse font-medium">Calling (Offline)...</span>
+                )
               ) : (
                 <span className="text-emerald-400 font-semibold">{formatTimer(durationSeconds)}</span>
               )}
@@ -482,7 +516,11 @@ export function CallModal({
             <div className="text-center">
               <h3 className="text-xl font-bold text-white">{otherUser.name}</h3>
               <p className="text-xs text-slate-400 mt-1">
-                {callStatus === "calling" ? "Ringing..." : "Audio Call Connected"}
+                {callStatus === "calling"
+                  ? isOtherUserOnline
+                    ? "Ringing phone..."
+                    : "User is currently offline (Calling...)"
+                  : "Audio Call Connected"}
               </p>
             </div>
           </div>

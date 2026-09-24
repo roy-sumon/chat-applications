@@ -180,16 +180,40 @@ export function ConversationSidebar({
             // Last message snippet
             let snippet = "No messages yet";
             if (conv.lastMessage) {
-              const prefix =
-                conv.lastMessage.senderId === currentUser.id
-                  ? "You: "
-                  : isGroup
-                  ? `${conv.lastMessage.sender?.name?.split(" ")[0] || "User"}: `
-                  : "";
-              const body =
-                conv.lastMessage.content ||
-                (conv.lastMessage.type === "IMAGE" ? "📷 Photo" : "📎 Attachment");
-              snippet = `${prefix}${body}`;
+              const lastContent = conv.lastMessage.content || "";
+              if (lastContent.startsWith("CALL:")) {
+                const parts = lastContent.split(":");
+                const callStatus = parts[1] || "MISSED";
+                const isVideo = parts[2] === "VIDEO";
+                const isCallSelf = conv.lastMessage.senderId === currentUser.id;
+                const dur = Number(parts[3]) || 0;
+
+                if (callStatus === "MISSED") {
+                  snippet = isCallSelf
+                    ? `${isVideo ? "📹 Outgoing video" : "📞 Outgoing voice"} call (No answer)`
+                    : `🔴 Missed ${isVideo ? "video" : "voice"} call`;
+                } else if (callStatus === "DECLINED") {
+                  snippet = `${isVideo ? "📹 Video" : "📞 Voice"} call declined`;
+                } else if (callStatus === "ENDED") {
+                  const m = Math.floor(dur / 60);
+                  const s = dur % 60;
+                  const durFormatted = m > 0 ? `${m}m ${s}s` : `${s}s`;
+                  snippet = `${isVideo ? "📹 Video" : "📞 Voice"} call (${durFormatted})`;
+                } else {
+                  snippet = isVideo ? "📹 Video call" : "📞 Voice call";
+                }
+              } else {
+                const prefix =
+                  conv.lastMessage.senderId === currentUser.id
+                    ? "You: "
+                    : isGroup
+                    ? `${conv.lastMessage.sender?.name?.split(" ")[0] || "User"}: `
+                    : "";
+                const body =
+                  lastContent ||
+                  (conv.lastMessage.type === "IMAGE" ? "📷 Photo" : "📎 Attachment");
+                snippet = `${prefix}${body}`;
+              }
             }
 
             return (

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { realtimeServer, REALTIME_EVENTS } from "@/lib/realtime";
+import { createMessage } from "@/lib/db/messages";
+import { MessageType } from "@prisma/client";
 import prisma from "@/lib/db/prisma";
 
 export async function POST(
@@ -15,7 +17,16 @@ export async function POST(
 
     const { conversationId } = await params;
     const body = await req.json();
-    const { action, targetUserId, callType, sdp, candidate, reason } = body;
+    const {
+      action,
+      targetUserId,
+      callType,
+      sdp,
+      candidate,
+      reason,
+      duration,
+      wasConnected,
+    } = body;
 
     // Verify conversation membership
     const member = await prisma.conversationMember.findUnique({
@@ -65,18 +76,157 @@ export async function POST(
         });
         break;
 
-      case "reject":
+      case "reject": {
         await realtimeServer.trigger(channels, REALTIME_EVENTS.CALL_REJECT, {
           conversationId,
           reason: reason || "declined",
         });
-        break;
 
-      case "end":
+        // Prevent duplicate call log messages within 4 seconds
+        const recentRejectLog = await prisma.message.findFirst({
+          where: {
+            conversationId,
+            type: MessageType.SYSTEM,
+            content: { startsWith: "CALL:" },
+            createdAt: { gte: new Date(Date.now() - 4000) },
+          },
+        });
+
+        if (!recentRejectLog) {
+          const typeStr = callType === "VIDEO" ? "VIDEO" : "AUDIO";
+          const logMsg = await createMessage({
+            conversationId,
+            senderId: user.id,
+            content: `CALL:DECLINED:${typeStr}`,
+            type: MessageType.SYSTEM,
+          });
+
+          await realtimeServer.trigger(
+            `presence-conversation-${conversationId}`,
+            REALTIME_EVENTS.NEW_MESSAGE,
+            { message: logMsg }
+          );
+
+          const members = await prisma.conversationMember.findMany({
+            where: { conversationId },
+            select: { userId: true },
+          });
+
+          await Promise.all(
+            members.map((m) =>
+              realtimeServer.trigger(
+                `private-user-${m.userId}`,
+                REALTIME_EVENTS.CONVERSATION_UPDATED,
+                { conversationId, lastMessage: logMsg }
+              )
+            )
+          );
+        }
+        break;
+      }
+
+      case "missed": {
+        await realtimeServer.trigger(channels, REALTIME_EVENTS.CALL_REJECT, {
+          conversationId,
+          reason: "Missed call",
+        });
+
+        const recentMissedLog = await prisma.message.findFirst({
+          where: {
+            conversationId,
+            type: MessageType.SYSTEM,
+            content: { startsWith: "CALL:" },
+            createdAt: { gte: new Date(Date.now() - 4000) },
+          },
+        });
+
+        if (!recentMissedLog) {
+          const typeStr = callType === "VIDEO" ? "VIDEO" : "AUDIO";
+          const logMsg = await createMessage({
+            conversationId,
+            senderId: user.id,
+            content: `CALL:MISSED:${typeStr}`,
+            type: MessageType.SYSTEM,
+          });
+
+          await realtimeServer.trigger(
+            `presence-conversation-${conversationId}`,
+            REALTIME_EVENTS.NEW_MESSAGE,
+            { message: logMsg }
+          );
+
+          const members = await prisma.conversationMember.findMany({
+            where: { conversationId },
+            select: { userId: true },
+          });
+
+          await Promise.all(
+            members.map((m) =>
+              realtimeServer.trigger(
+                `private-user-${m.userId}`,
+                REALTIME_EVENTS.CONVERSATION_UPDATED,
+                { conversationId, lastMessage: logMsg }
+              )
+            )
+          );
+        }
+        break;
+      }
+
+      case "end": {
         await realtimeServer.trigger(channels, REALTIME_EVENTS.CALL_END, {
           conversationId,
         });
+
+        // Prevent duplicate call log messages within 4 seconds
+        const recentEndLog = await prisma.message.findFirst({
+          where: {
+            conversationId,
+            type: MessageType.SYSTEM,
+            content: { startsWith: "CALL:" },
+            createdAt: { gte: new Date(Date.now() - 4000) },
+          },
+        });
+
+        if (!recentEndLog) {
+          const typeStr = callType === "VIDEO" ? "VIDEO" : "AUDIO";
+          let callContent: string;
+          if (wasConnected && duration && duration > 0) {
+            callContent = `CALL:ENDED:${typeStr}:${Math.round(duration)}`;
+          } else {
+            callContent = `CALL:MISSED:${typeStr}`;
+          }
+
+          const logMsg = await createMessage({
+            conversationId,
+            senderId: user.id,
+            content: callContent,
+            type: MessageType.SYSTEM,
+          });
+
+          await realtimeServer.trigger(
+            `presence-conversation-${conversationId}`,
+            REALTIME_EVENTS.NEW_MESSAGE,
+            { message: logMsg }
+          );
+
+          const members = await prisma.conversationMember.findMany({
+            where: { conversationId },
+            select: { userId: true },
+          });
+
+          await Promise.all(
+            members.map((m) =>
+              realtimeServer.trigger(
+                `private-user-${m.userId}`,
+                REALTIME_EVENTS.CONVERSATION_UPDATED,
+                { conversationId, lastMessage: logMsg }
+              )
+            )
+          );
+        }
         break;
+      }
 
       default:
         return NextResponse.json({ error: "Invalid action" }, { status: 400 });

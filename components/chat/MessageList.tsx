@@ -20,6 +20,7 @@ interface MessageListProps {
   onEdit: (message: MessageWithDetails) => void;
   onDelete: (messageId: string) => void;
   onReact: (messageId: string, emoji: string) => void;
+  onStartCall?: (type: "AUDIO" | "VIDEO") => void;
 }
 
 export function MessageList({
@@ -35,6 +36,7 @@ export function MessageList({
   onEdit,
   onDelete,
   onReact,
+  onStartCall,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -116,6 +118,7 @@ export function MessageList({
           onEdit={onEdit}
           onDelete={onDelete}
           onReact={onReact}
+          onStartCall={onStartCall}
           onImageClick={(url) => setSelectedImage(url)}
         />
       ))}
