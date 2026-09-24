@@ -16,7 +16,6 @@ import {
   FileText,
   Download,
   Smile,
-  MoreVertical,
 } from "lucide-react";
 
 interface MessageItemProps {

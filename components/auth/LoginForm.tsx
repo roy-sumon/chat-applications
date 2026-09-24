@@ -28,13 +28,14 @@ export function LoginForm() {
     try {
       const res = await signIn("credentials", {
         redirect: false,
-        email,
+        email: email.trim().toLowerCase(),
         password,
       });
 
       if (res?.error) {
         setError("Invalid email address or password.");
         toast.error("Invalid credentials provided.", "Login Failed");
+        setIsLoading(false);
       } else {
         toast.success("Welcome back!", "Signed In");
         router.push(callbackUrl);
@@ -43,7 +44,6 @@ export function LoginForm() {
     } catch (err) {
       console.error("Sign-in error:", err);
       setError("An unexpected error occurred. Please try again.");
-    } finally {
       setIsLoading(false);
     }
   };

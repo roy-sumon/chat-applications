@@ -37,10 +37,13 @@ export function RegisterForm() {
     setIsLoading(true);
 
     try {
+      const trimmedEmail = email.trim().toLowerCase();
+      const trimmedName = name.trim();
+
       const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify({ name: trimmedName, email: trimmedEmail, password }),
       });
 
       const data = await res.json();
@@ -55,17 +58,23 @@ export function RegisterForm() {
       toast.success("Account created! Signing you in...", "Registration Successful");
 
       // Auto sign-in
-      const signInRes = await signIn("credentials", {
-        redirect: false,
-        email,
-        password,
-      });
+      try {
+        const signInRes = await signIn("credentials", {
+          redirect: false,
+          email: trimmedEmail,
+          password,
+        });
 
-      if (signInRes?.error) {
+        if (signInRes?.error) {
+          toast.info("Account created! Please sign in.", "Welcome");
+          router.push("/login");
+        } else {
+          router.push("/");
+          router.refresh();
+        }
+      } catch {
+        toast.info("Account created! Please sign in.", "Welcome");
         router.push("/login");
-      } else {
-        router.push("/");
-        router.refresh();
       }
     } catch (err) {
       console.error("Registration error:", err);

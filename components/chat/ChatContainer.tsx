@@ -142,6 +142,19 @@ export function ChatContainer({
     }
   };
 
+  // 3.5 Refresh conversations list from API
+  const refreshConversations = useCallback(async () => {
+    try {
+      const res = await fetch("/api/conversations");
+      const data = await res.json();
+      if (res.ok) {
+        setConversations(data.conversations || []);
+      }
+    } catch (err) {
+      console.error("Failed to refresh conversations:", err);
+    }
+  }, []);
+
   // 4. Real-time subscription to active conversation channel
   useEffect(() => {
     if (!pusherClient || !selectedConversationId) return;
@@ -258,26 +271,14 @@ export function ChatContainer({
       refreshConversations();
     });
 
+    const activeTimers = typingTimerMapRef.current;
     return () => {
       channel.unbind_all();
       pusherClient.unsubscribe(channelName);
-      typingTimerMapRef.current.forEach((t) => clearTimeout(t));
-      typingTimerMapRef.current.clear();
+      activeTimers.forEach((t) => clearTimeout(t));
+      activeTimers.clear();
     };
-  }, [pusherClient, selectedConversationId, currentUser.id, markAsSeen]);
-
-  // 5. Refresh conversations list from API
-  const refreshConversations = async () => {
-    try {
-      const res = await fetch("/api/conversations");
-      const data = await res.json();
-      if (res.ok) {
-        setConversations(data.conversations || []);
-      }
-    } catch (err) {
-      console.error("Failed to refresh conversations:", err);
-    }
-  };
+  }, [pusherClient, selectedConversationId, currentUser.id, markAsSeen, refreshConversations]);
 
   // 6. Send message with optimistic update
   const handleSendMessage = async (payload: {

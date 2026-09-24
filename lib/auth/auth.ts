@@ -5,6 +5,7 @@ import prisma from "@/lib/db/prisma";
 import { loginSchema } from "@/lib/validation";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  trustHost: true,
   providers: [
     Credentials({
       name: "credentials",
@@ -67,7 +68,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
     async session({ session, token }) {
       if (token && session.user) {
-        session.user.id = token.id as string;
+        session.user.id = (token.id as string) || (token.sub as string);
         session.user.name = token.name as string;
         session.user.email = token.email as string;
         session.user.image = token.picture as string | null | undefined;
