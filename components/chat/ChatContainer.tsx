@@ -173,14 +173,14 @@ export function ChatContainer({
         return [...filtered, data.message];
       });
 
-      // Update sidebar last message
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === selectedConversationId
-            ? { ...c, lastMessage: data.message, updatedAt: new Date() }
-            : c
-        )
-      );
+      // Update sidebar last message and bring to top
+      setConversations((prev) => {
+        const target = prev.find((c) => c.id === selectedConversationId);
+        if (!target) return prev;
+        const updated = { ...target, lastMessage: data.message, updatedAt: new Date() };
+        const others = prev.filter((c) => c.id !== selectedConversationId);
+        return [updated, ...others];
+      });
 
       // If sent by someone else and active, mark seen
       if (data.message.senderId !== currentUser.id) {
@@ -280,6 +280,80 @@ export function ChatContainer({
     };
   }, [pusherClient, selectedConversationId, currentUser.id, markAsSeen, refreshConversations]);
 
+  // 5. User private channel subscription (incoming messages across all chats & new conversations)
+  useEffect(() => {
+    if (!pusherClient || !currentUser.id) return;
+
+    const userChannel = pusherClient.subscribe(`private-user-${currentUser.id}`);
+
+    userChannel.bind(REALTIME_EVENTS.CONVERSATION_CREATED, () => {
+      refreshConversations();
+    });
+
+    userChannel.bind(
+      REALTIME_EVENTS.CONVERSATION_UPDATED,
+      (data: { conversationId: string; lastMessage?: MessageWithDetails }) => {
+        if (!data.conversationId) return;
+
+        setConversations((prev) => {
+          const index = prev.findIndex((c) => c.id === data.conversationId);
+          if (index === -1) {
+            refreshConversations();
+            return prev;
+          }
+          const target = prev[index];
+          const isCurrentActive = target.id === selectedConversationId;
+          const updatedConv: ConversationWithDetails = {
+            ...target,
+            lastMessage: data.lastMessage || target.lastMessage,
+            updatedAt: new Date(),
+            unreadCount: isCurrentActive ? 0 : (target.unreadCount || 0) + 1,
+          };
+
+          const remaining = prev.filter((c) => c.id !== data.conversationId);
+          return [updatedConv, ...remaining];
+        });
+      }
+    );
+
+    return () => {
+      userChannel.unbind_all();
+      pusherClient.unsubscribe(`private-user-${currentUser.id}`);
+    };
+  }, [pusherClient, currentUser.id, selectedConversationId, refreshConversations]);
+
+  // 5.5 Silent background sync for active conversation messages
+  useEffect(() => {
+    if (!selectedConversationId) return;
+
+    const syncInterval = setInterval(async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      try {
+        const res = await fetch(`/api/conversations/${selectedConversationId}/messages?limit=25`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.messages && Array.isArray(data.messages)) {
+          setMessages((prev) => {
+            const map = new Map<string, MessageWithDetails>();
+            prev.forEach((m) => {
+              if (!m.isOptimistic) map.set(m.id, m);
+            });
+            data.messages.forEach((m: MessageWithDetails) => map.set(m.id, m));
+            const optimistic = prev.filter((m) => m.isOptimistic);
+            const combined = Array.from(map.values()).sort(
+              (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+            );
+            return [...combined, ...optimistic];
+          });
+        }
+      } catch {
+        // silent
+      }
+    }, 3000);
+
+    return () => clearInterval(syncInterval);
+  }, [selectedConversationId]);
+
   // 6. Send message with optimistic update
   const handleSendMessage = async (payload: {
     content?: string;
@@ -341,14 +415,14 @@ export function ChatContainer({
         prev.map((m) => (m.id === tempId ? data.message : m))
       );
 
-      // Update last message in sidebar
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === selectedConversationId
-            ? { ...c, lastMessage: data.message, updatedAt: new Date() }
-            : c
-        )
-      );
+      // Update last message in sidebar and bring to top
+      setConversations((prev) => {
+        const target = prev.find((c) => c.id === selectedConversationId);
+        if (!target) return prev;
+        const updated = { ...target, lastMessage: data.message, updatedAt: new Date() };
+        const others = prev.filter((c) => c.id !== selectedConversationId);
+        return [updated, ...others];
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error sending message";
       toast.error(msg, "Error");
@@ -450,7 +524,7 @@ export function ChatContainer({
   };
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-slate-950 text-slate-100">
+    <div className="flex h-[100dvh] w-full overflow-hidden bg-slate-950 text-slate-100">
       {/* Sidebar: Full on desktop; toggled on mobile */}
       <div
         className={`w-full md:w-auto h-full ${

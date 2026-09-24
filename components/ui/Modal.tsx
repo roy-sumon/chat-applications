@@ -63,7 +63,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         className={cn(
-          "relative w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6 overflow-hidden z-10",
+          "relative w-full max-h-[90dvh] overflow-y-auto bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-4 sm:p-6 z-10",
           "transition-all duration-200 animate-in zoom-in-95 fade-in",
           maxWidthMap[maxWidth]
         )}

@@ -21,7 +21,7 @@ export function EmojiPicker({ onSelect, isOpen, onClose }: EmojiPickerProps) {
   return (
     <>
       <div className="fixed inset-0 z-30" onClick={onClose} />
-      <div className="absolute bottom-14 left-0 z-40 p-3 bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl backdrop-blur-xl w-64 animate-in zoom-in-95 fade-in">
+      <div className="absolute bottom-14 left-0 sm:left-0 z-40 p-3 bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl backdrop-blur-xl w-64 max-w-[calc(100vw-3rem)] animate-in zoom-in-95 fade-in">
         <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 mb-2 px-1">
           <Smile className="w-3.5 h-3.5" />
           <span>Quick Emojis</span>

@@ -81,9 +81,10 @@ export function MessageItem({
   return (
     <div
       className={cn(
-        "group relative flex gap-2.5 my-1.5 transition-colors px-2 py-0.5 rounded-xl",
+        "group relative flex gap-2.5 my-1.5 transition-colors px-2 py-0.5 rounded-xl cursor-pointer sm:cursor-default",
         isSelf ? "justify-end" : "justify-start"
       )}
+      onClick={() => setShowActions((prev) => !prev)}
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => {
         setShowActions(false);
@@ -175,7 +176,7 @@ export function MessageItem({
       )}
 
       {/* Message Content Bubble Container */}
-      <div className={cn("flex flex-col max-w-[80%] sm:max-w-[70%]", isSelf && "items-end")}>
+      <div className={cn("flex flex-col max-w-[85%] sm:max-w-[70%]", isSelf && "items-end")}>
         {/* Sender Name for group chats */}
         {isGroup && !isSelf && (
           <span className="text-[11px] font-semibold text-indigo-400 ml-1 mb-0.5">

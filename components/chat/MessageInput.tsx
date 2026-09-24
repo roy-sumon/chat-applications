@@ -292,9 +292,9 @@ export function MessageInput({
           value={content}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
-          placeholder={editingMessage ? "Edit message..." : "Type a message... (Enter to send, Shift+Enter for new line)"}
+          placeholder={editingMessage ? "Edit message..." : "Type a message..."}
           rows={1}
-          className="flex-1 max-h-32 min-h-[42px] py-2.5 px-3.5 bg-slate-800/80 border border-slate-700/80 rounded-xl text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 resize-none transition"
+          className="flex-1 max-h-32 min-h-[42px] py-2 px-3 sm:py-2.5 sm:px-3.5 bg-slate-800/80 border border-slate-700/80 rounded-xl text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 resize-none transition"
         />
 
         {/* Send Button */}

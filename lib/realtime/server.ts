@@ -1,9 +1,10 @@
 import PusherServer from "pusher";
 import { RealtimeServer, REALTIME_EVENTS } from "./types";
+import { broadcastLocalEvent } from "./emitter";
 
-class PusherRealtimeServer implements RealtimeServer {
+class UnifiedRealtimeServer implements RealtimeServer {
   private pusher: PusherServer | null = null;
-  private isConfigured: boolean = false;
+  private isPusherConfigured: boolean = false;
 
   constructor() {
     const appId = process.env.PUSHER_APP_ID;
@@ -20,33 +21,33 @@ class PusherRealtimeServer implements RealtimeServer {
           cluster,
           useTLS: true,
         });
-        this.isConfigured = true;
+        this.isPusherConfigured = true;
       } catch (err) {
         console.warn("[Realtime] Failed to initialize Pusher server instance:", err);
-      }
-    } else {
-      if (process.env.NODE_ENV !== "production") {
-        console.info(
-          "[Realtime] Pusher credentials not configured or using placeholders. Running in fallback no-op mode."
-        );
       }
     }
   }
 
   async trigger(channel: string | string[], event: string, data: unknown): Promise<void> {
-    if (!this.isConfigured || !this.pusher) {
-      return;
+    // 1. Broadcast to local EventBus for instant (<5ms) SSE & multi-tab delivery
+    const channels = Array.isArray(channel) ? channel : [channel];
+    for (const ch of channels) {
+      broadcastLocalEvent(ch, event, data);
     }
-    try {
-      await this.pusher.trigger(channel, event, data);
-    } catch (error) {
-      console.error(`[Realtime] Failed to trigger event "${event}" on channel "${channel}":`, error);
+
+    // 2. Broadcast via Pusher if configured
+    if (this.isPusherConfigured && this.pusher) {
+      try {
+        await this.pusher.trigger(channel, event, data);
+      } catch (error) {
+        console.error(`[Realtime] Pusher trigger failed for event "${event}" on channel "${channel}":`, error);
+      }
     }
   }
 
   authorizeChannel(socketId: string, channel: string, presenceData?: Record<string, unknown>): unknown {
-    if (!this.isConfigured || !this.pusher) {
-      return { auth: "mock-auth-token" };
+    if (!this.isPusherConfigured || !this.pusher) {
+      return { auth: `${socketId}:${Date.now()}` };
     }
     if (channel.startsWith("presence-") && presenceData) {
       return this.pusher.authorizeChannel(socketId, channel, {
@@ -59,5 +60,5 @@ class PusherRealtimeServer implements RealtimeServer {
 }
 
 // Export singleton instance of RealtimeServer
-export const realtimeServer: RealtimeServer = new PusherRealtimeServer();
+export const realtimeServer: RealtimeServer = new UnifiedRealtimeServer();
 export { REALTIME_EVENTS };

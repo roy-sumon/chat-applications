@@ -30,3 +30,20 @@ export interface SeenEventPayload {
   readAt: string;
   messageIds: string[];
 }
+
+// Client-side realtime interfaces
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type EventCallback = (data: any) => void;
+
+export interface RealtimeClientChannel {
+  name: string;
+  bind: (event: string, callback: EventCallback) => RealtimeClientChannel;
+  unbind: (event?: string, callback?: EventCallback) => RealtimeClientChannel;
+  unbind_all: () => RealtimeClientChannel;
+}
+
+export interface ClientRealtimeInstance {
+  subscribe: (channelName: string) => RealtimeClientChannel;
+  unsubscribe: (channelName: string) => void;
+  disconnect?: () => void;
+}

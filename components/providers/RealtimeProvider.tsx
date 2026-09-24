@@ -3,13 +3,11 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { getPusherClient } from "@/lib/realtime/client";
-import { REALTIME_EVENTS } from "@/lib/realtime/types";
+import { REALTIME_EVENTS, ClientRealtimeInstance } from "@/lib/realtime/types";
 import { useToast } from "./ToastProvider";
-import type PusherClient from "pusher-js";
-import type { PresenceChannel } from "pusher-js";
 
 interface RealtimeContextType {
-  pusherClient: PusherClient | null;
+  pusherClient: ClientRealtimeInstance | null;
   onlineUserIds: Set<string>;
   isUserOnline: (userId: string) => boolean;
 }
@@ -22,11 +20,12 @@ const RealtimeContext = createContext<RealtimeContextType>({
 
 export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   const { data: session } = useSession();
+  const currentUserId = session?.user?.id;
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set());
-  const [pusherClient, setPusherClient] = useState<PusherClient | null>(null);
+  const [pusherClient, setPusherClient] = useState<ClientRealtimeInstance | null>(null);
   const { toast } = useToast();
 
-  // Request browser notification permission once on mount
+  // 1. Request browser notification permission once on mount
   useEffect(() => {
     if (typeof window !== "undefined" && "Notification" in window) {
       if (Notification.permission === "default") {
@@ -35,42 +34,96 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // 2. Active Presence heartbeat & online polling
   useEffect(() => {
-    const userId = session?.user?.id;
-    if (!userId) return;
+    if (!currentUserId) return;
 
-    const pusher = getPusherClient();
-    if (!pusher) return;
+    // Immediately mark self as online
+    setOnlineUserIds((prev) => new Set([...prev, currentUserId]));
 
-    setPusherClient(pusher);
+    const sendHeartbeat = async () => {
+      try {
+        const res = await fetch("/api/presence", { method: "POST" });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.onlineUserIds && Array.isArray(data.onlineUserIds)) {
+            setOnlineUserIds(new Set([...data.onlineUserIds, currentUserId]));
+          }
+        }
+      } catch {
+        // network issue, keep current set
+      }
+    };
 
-    // 1. Subscribe to online presence channel
-    const presenceChannel = pusher.subscribe("presence-online") as PresenceChannel;
+    // Initial heartbeat
+    sendHeartbeat();
 
-    presenceChannel.bind("pusher:subscription_succeeded", (members: { members: Record<string, unknown> }) => {
-      const activeIds = new Set(Object.keys(members.members));
-      setOnlineUserIds(activeIds);
-    });
+    // Periodic heartbeat every 20 seconds
+    const interval = setInterval(sendHeartbeat, 20000);
+
+    // Heartbeat on tab focus
+    const handleFocus = () => sendHeartbeat();
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [currentUserId]);
+
+  // 3. Connect Realtime Channels
+  useEffect(() => {
+    if (!currentUserId) return;
+
+    const client = getPusherClient();
+    if (!client) return;
+
+    setPusherClient(client);
+
+    // Subscribe to presence channel
+    const presenceChannel = client.subscribe("presence-online");
+
+    presenceChannel.bind(
+      "pusher:subscription_succeeded",
+      (membersData: { members?: Record<string, unknown> }) => {
+        const members = membersData?.members || {};
+        const activeIds = new Set<string>([
+          ...Object.keys(members),
+          currentUserId,
+        ]);
+        setOnlineUserIds(activeIds);
+      }
+    );
 
     presenceChannel.bind("pusher:member_added", (member: { id: string }) => {
-      setOnlineUserIds((prev) => new Set([...prev, member.id]));
+      if (member?.id) {
+        setOnlineUserIds((prev) => new Set([...prev, member.id]));
+      }
     });
 
     presenceChannel.bind("pusher:member_removed", (member: { id: string }) => {
-      setOnlineUserIds((prev) => {
-        const next = new Set(prev);
-        next.delete(member.id);
-        return next;
-      });
+      if (member?.id && member.id !== currentUserId) {
+        setOnlineUserIds((prev) => {
+          const next = new Set(prev);
+          next.delete(member.id);
+          return next;
+        });
+      }
     });
 
-    // 2. Subscribe to user's private channel for incoming conversations and alerts
-    const userChannel = pusher.subscribe(`private-user-${userId}`);
+    // Subscribe to user private channel
+    const userChannel = client.subscribe(`private-user-${currentUserId}`);
 
-    userChannel.bind(REALTIME_EVENTS.CONVERSATION_CREATED, (data: { conversation: { name?: string; type: string } }) => {
-      const title = data.conversation.type === "GROUP" ? data.conversation.name : "New Conversation";
-      toast.info("You were added to a new conversation.", title);
-    });
+    userChannel.bind(
+      REALTIME_EVENTS.CONVERSATION_CREATED,
+      (data: { conversation: { name?: string; type: string } }) => {
+        const title =
+          data.conversation.type === "GROUP"
+            ? data.conversation.name
+            : "New Conversation";
+        toast.info("You were added to a new conversation.", title);
+      }
+    );
 
     userChannel.bind(
       REALTIME_EVENTS.CONVERSATION_UPDATED,
@@ -79,8 +132,12 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
           const senderName = data.lastMessage.sender?.name || "Someone";
           const snippet = data.lastMessage.content || "Sent an attachment";
 
-          // If document is not focused, trigger browser notification if allowed
-          if (typeof window !== "undefined" && document.hidden && "Notification" in window && Notification.permission === "granted") {
+          if (
+            typeof window !== "undefined" &&
+            document.hidden &&
+            "Notification" in window &&
+            Notification.permission === "granted"
+          ) {
             try {
               new Notification(`New message from ${senderName}`, {
                 body: snippet,
@@ -97,16 +154,18 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     return () => {
       presenceChannel.unbind_all();
       userChannel.unbind_all();
-      pusher.unsubscribe("presence-online");
-      pusher.unsubscribe(`private-user-${userId}`);
+      client.unsubscribe("presence-online");
+      client.unsubscribe(`private-user-${currentUserId}`);
     };
-  }, [session?.user?.id, toast]);
+  }, [currentUserId, toast]);
 
   const isUserOnline = useCallback(
     (targetUserId: string) => {
+      if (!targetUserId) return false;
+      if (currentUserId && targetUserId === currentUserId) return true;
       return onlineUserIds.has(targetUserId);
     },
-    [onlineUserIds]
+    [currentUserId, onlineUserIds]
   );
 
   return (
@@ -117,5 +176,9 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
 }
 
 export function useRealtimeContext() {
-  return useContext(RealtimeContext);
+  const context = useContext(RealtimeContext);
+  if (!context) {
+    throw new Error("useRealtimeContext must be used within RealtimeProvider");
+  }
+  return context;
 }
