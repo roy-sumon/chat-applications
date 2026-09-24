@@ -1,0 +1,32 @@
+export const REALTIME_EVENTS = {
+  NEW_MESSAGE: "new-message",
+  MESSAGE_UPDATED: "message-updated",
+  MESSAGE_DELETED: "message-deleted",
+  REACTION_UPDATED: "reaction-updated",
+  MESSAGES_SEEN: "messages-seen",
+  TYPING: "typing",
+  CONVERSATION_CREATED: "conversation-created",
+  CONVERSATION_UPDATED: "conversation-updated",
+  MEMBER_UPDATED: "member-updated",
+} as const;
+
+export type RealtimeEventType = (typeof REALTIME_EVENTS)[keyof typeof REALTIME_EVENTS];
+
+export interface RealtimeServer {
+  trigger(channel: string | string[], event: string, data: unknown): Promise<void>;
+  authorizeChannel(socketId: string, channel: string, presenceData?: Record<string, unknown>): unknown;
+}
+
+export interface TypingEventPayload {
+  userId: string;
+  userName: string;
+  conversationId: string;
+  isTyping: boolean;
+}
+
+export interface SeenEventPayload {
+  conversationId: string;
+  userId: string;
+  readAt: string;
+  messageIds: string[];
+}
