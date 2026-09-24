@@ -51,7 +51,7 @@ class PusherRealtimeServer implements RealtimeServer {
     if (channel.startsWith("presence-") && presenceData) {
       return this.pusher.authorizeChannel(socketId, channel, {
         user_id: presenceData.user_id as string,
-        user_info: presenceData.user_info,
+        user_info: (presenceData.user_info as Record<string, unknown>) || {},
       });
     }
     return this.pusher.authorizeChannel(socketId, channel);

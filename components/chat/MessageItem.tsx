@@ -278,11 +278,11 @@ export function MessageItem({
             {isSelf && (
               <span className="inline-flex items-center ml-0.5">
                 {message.isOptimistic ? (
-                  <Clock className="w-3 h-3 text-indigo-300/70 animate-pulse" />
+                  <span title="Sending..."><Clock className="w-3 h-3 text-indigo-300/70 animate-pulse" /></span>
                 ) : isSeen ? (
-                  <CheckCheck className="w-3.5 h-3.5 text-sky-300 font-bold" title="Seen" />
+                  <span title="Seen"><CheckCheck className="w-3.5 h-3.5 text-sky-300 font-bold" /></span>
                 ) : (
-                  <Check className="w-3.5 h-3.5 text-indigo-300/80" title="Delivered" />
+                  <span title="Delivered"><Check className="w-3.5 h-3.5 text-indigo-300/80" /></span>
                 )}
               </span>
             )}
