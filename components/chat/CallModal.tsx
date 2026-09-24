@@ -27,7 +27,25 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun3.l.google.com:19302" },
+    { urls: "stun:openrelay.metered.ca:80" },
+    {
+      urls: "turn:openrelay.metered.ca:80",
+      username: "openrelay",
+      credential: "openrelay",
+    },
+    {
+      urls: "turn:openrelay.metered.ca:443",
+      username: "openrelay",
+      credential: "openrelay",
+    },
+    {
+      urls: "turn:openrelay.metered.ca:443?transport=tcp",
+      username: "openrelay",
+      credential: "openrelay",
+    },
   ],
+  iceCandidatePoolSize: 10,
 };
 
 export type CallStatus =
@@ -64,6 +82,7 @@ interface CallModalProps {
   }) => Promise<void>;
   remoteAnswerSdp?: RTCSessionDescriptionInit | null;
   pendingIceCandidate?: RTCIceCandidateInit | null;
+  pendingIceCandidates?: RTCIceCandidateInit[];
 }
 
 export function CallModal({
@@ -78,6 +97,7 @@ export function CallModal({
   onSendSignal,
   remoteAnswerSdp,
   pendingIceCandidate,
+  pendingIceCandidates = [],
 }: CallModalProps) {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
@@ -91,6 +111,8 @@ export function CallModal({
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const iceCandidateQueueRef = useRef<RTCIceCandidateInit[]>([]);
+  const processedCandidatesCountRef = useRef(0);
   const callTimerRef = useRef<NodeJS.Timeout | null>(null);
   const ringtoneStopRef = useRef<(() => void) | null>(null);
   const { toast } = useToast();
@@ -195,6 +217,11 @@ export function CallModal({
   // 3. Initialize Outgoing Call PeerConnection (Caller side)
   const initOutgoingCall = useCallback(async () => {
     try {
+      // Pre-unlock audio element in user gesture for mobile devices
+      if (remoteAudioRef.current) {
+        remoteAudioRef.current.play().catch(() => {});
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
         video: callType === "VIDEO",
@@ -256,6 +283,10 @@ export function CallModal({
       ringtoneStopRef.current();
       ringtoneStopRef.current = null;
     }
+    // Pre-unlock audio element in user gesture for mobile devices
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.play().catch(() => {});
+    }
     onAcceptIncoming();
 
     try {
@@ -288,6 +319,17 @@ export function CallModal({
 
       if (incomingOfferSdp) {
         await pc.setRemoteDescription(new RTCSessionDescription(incomingOfferSdp));
+
+        // Flush any ICE candidates that arrived before offer was set
+        while (iceCandidateQueueRef.current.length > 0) {
+          const queued = iceCandidateQueueRef.current.shift();
+          if (queued) {
+            await pc.addIceCandidate(new RTCIceCandidate(queued)).catch((err) => {
+              console.warn("[WebRTC] Error adding queued ICE candidate:", err);
+            });
+          }
+        }
+
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
 
@@ -307,26 +349,51 @@ export function CallModal({
   // 5. Handle Remote Answer arrived (Caller side receives answer)
   useEffect(() => {
     if (remoteAnswerSdp && peerConnectionRef.current) {
+      stopAllRingtones();
       const pc = peerConnectionRef.current;
       if (pc.signalingState === "have-local-offer") {
-        pc.setRemoteDescription(new RTCSessionDescription(remoteAnswerSdp)).catch(
-          (err) => console.error("Error setting remote answer:", err)
-        );
+        pc.setRemoteDescription(new RTCSessionDescription(remoteAnswerSdp))
+          .then(async () => {
+            // Flush any ICE candidates that arrived before remote answer was processed
+            while (iceCandidateQueueRef.current.length > 0) {
+              const queued = iceCandidateQueueRef.current.shift();
+              if (queued && peerConnectionRef.current) {
+                await peerConnectionRef.current
+                  .addIceCandidate(new RTCIceCandidate(queued))
+                  .catch((err) => {
+                    console.warn("[WebRTC] Error adding queued ICE candidate:", err);
+                  });
+              }
+            }
+          })
+          .catch((err) => console.error("Error setting remote answer:", err));
       }
     }
   }, [remoteAnswerSdp]);
 
-  // 6. Handle Incoming ICE candidate
+  // 6. Handle Incoming ICE candidates with queueing
   useEffect(() => {
-    if (pendingIceCandidate && peerConnectionRef.current) {
+    const allCandidates = [
+      ...pendingIceCandidates,
+      ...(pendingIceCandidate ? [pendingIceCandidate] : []),
+    ];
+
+    if (allCandidates.length === 0) return;
+
+    const newCandidates = allCandidates.slice(processedCandidatesCountRef.current);
+    processedCandidatesCountRef.current = allCandidates.length;
+
+    newCandidates.forEach((cand) => {
       const pc = peerConnectionRef.current;
-      if (pc.remoteDescription) {
-        pc.addIceCandidate(new RTCIceCandidate(pendingIceCandidate)).catch(
-          (err) => console.error("Error adding ice candidate:", err)
-        );
+      if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+        pc.addIceCandidate(new RTCIceCandidate(cand)).catch((err) => {
+          console.warn("[WebRTC] addIceCandidate error:", err);
+        });
+      } else {
+        iceCandidateQueueRef.current.push(cand);
       }
-    }
-  }, [pendingIceCandidate]);
+    });
+  }, [pendingIceCandidates, pendingIceCandidate]);
 
   // 7. Toggle Audio Mute
   const toggleAudio = () => {
@@ -541,8 +608,21 @@ export function CallModal({
 
       {/* Main Video / Audio Body */}
       <div className="flex-1 relative flex items-center justify-center bg-slate-950 overflow-hidden">
-        {/* Hidden Audio element for remote audio playback in all call types */}
-        <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
+        {/* Audio element for remote audio playback in all call types (off-screen, not display:none) */}
+        <audio
+          ref={remoteAudioRef}
+          autoPlay
+          playsInline
+          style={{
+            position: "fixed",
+            top: -9999,
+            left: -9999,
+            width: "1px",
+            height: "1px",
+            opacity: 0.001,
+            pointerEvents: "none",
+          }}
+        />
 
         {callType === "VIDEO" && remoteStream ? (
           <video

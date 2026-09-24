@@ -54,11 +54,14 @@ export interface CallOfferPayload {
 export interface CallAnswerPayload {
   conversationId: string;
   calleeId: string;
+  callerId?: string;
   sdp: RTCSessionDescriptionInit;
 }
 
 export interface CallIceCandidatePayload {
   conversationId: string;
+  senderId?: string;
+  targetUserId?: string;
   candidate: RTCIceCandidateInit;
 }
 

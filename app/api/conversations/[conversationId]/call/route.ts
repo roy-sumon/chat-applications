@@ -65,6 +65,7 @@ export async function POST(
         await realtimeServer.trigger(channels, REALTIME_EVENTS.CALL_ANSWER, {
           conversationId,
           calleeId: user.id,
+          callerId: targetUserId,
           sdp,
         });
         break;
@@ -72,6 +73,8 @@ export async function POST(
       case "ice-candidate":
         await realtimeServer.trigger(channels, REALTIME_EVENTS.CALL_ICE_CANDIDATE, {
           conversationId,
+          senderId: user.id,
+          targetUserId,
           candidate,
         });
         break;

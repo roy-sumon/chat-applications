@@ -35,13 +35,15 @@ class UnifiedRealtimeServer implements RealtimeServer {
       broadcastLocalEvent(ch, event, data);
     }
 
-    // 2. Broadcast via Pusher if configured
+    // 2. Broadcast via Pusher if configured (trigger individually to prevent Pusher 400 on presence channels)
     if (this.isPusherConfigured && this.pusher) {
-      try {
-        await this.pusher.trigger(channel, event, data);
-      } catch (error) {
-        console.error(`[Realtime] Pusher trigger failed for event "${event}" on channel "${channel}":`, error);
-      }
+      await Promise.allSettled(
+        channels.map((ch) =>
+          this.pusher!.trigger(ch, event, data).catch((error) => {
+            console.error(`[Realtime] Pusher trigger failed for event "${event}" on channel "${ch}":`, error);
+          })
+        )
+      );
     }
   }
 

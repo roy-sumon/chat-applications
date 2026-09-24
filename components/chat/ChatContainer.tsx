@@ -78,13 +78,18 @@ export function ChatContainer({
   } | null>(null);
   const [incomingOfferSdp, setIncomingOfferSdp] = useState<RTCSessionDescriptionInit | null>(null);
   const [remoteAnswerSdp, setRemoteAnswerSdp] = useState<RTCSessionDescriptionInit | null>(null);
-  const [pendingIceCandidate, setPendingIceCandidate] = useState<RTCIceCandidateInit | null>(null);
+  const [pendingIceCandidates, setPendingIceCandidates] = useState<RTCIceCandidateInit[]>([]);
   const [callConversationId, setCallConversationId] = useState<string | null>(null);
   const callStatusRef = useRef<CallStatus>("idle");
+  const selectedConversationIdRef = useRef(selectedConversationId);
 
   useEffect(() => {
     callStatusRef.current = callStatus;
   }, [callStatus]);
+
+  useEffect(() => {
+    selectedConversationIdRef.current = selectedConversationId;
+  }, [selectedConversationId]);
 
   // Mobile navigation state: show sidebar or active chat
   const [mobileView, setMobileView] = useState<"list" | "chat">(
@@ -150,7 +155,7 @@ export function ChatContainer({
       setActiveCallType(type);
       setIncomingOfferSdp(null);
       setRemoteAnswerSdp(null);
-      setPendingIceCandidate(null);
+      setPendingIceCandidates([]);
       setCallStatus("calling");
     },
     [activeConversation, currentUser.id, toast]
@@ -174,7 +179,7 @@ export function ChatContainer({
     setCallingTarget(null);
     setIncomingOfferSdp(null);
     setRemoteAnswerSdp(null);
-    setPendingIceCandidate(null);
+    setPendingIceCandidates([]);
     setCallConversationId(null);
   }, [callingTarget, callConversationId, selectedConversationId, activeCallType, handleSendCallSignal]);
 
@@ -197,7 +202,7 @@ export function ChatContainer({
       setCallingTarget(null);
       setIncomingOfferSdp(null);
       setRemoteAnswerSdp(null);
-      setPendingIceCandidate(null);
+      setPendingIceCandidates([]);
       setCallConversationId(null);
     },
     [callingTarget, callConversationId, selectedConversationId, activeCallType, handleSendCallSignal]
@@ -425,6 +430,44 @@ export function ChatContainer({
       refreshConversations();
     });
 
+    // WebRTC signaling over conversation channel (redundant delivery path)
+    channel.bind(REALTIME_EVENTS.CALL_ANSWER, (data: CallAnswerPayload) => {
+      if (data.calleeId !== currentUser.id) {
+        stopAllRingtones();
+        setRemoteAnswerSdp(data.sdp);
+        setCallStatus("connected");
+      }
+    });
+
+    channel.bind(REALTIME_EVENTS.CALL_ICE_CANDIDATE, (data: CallIceCandidatePayload) => {
+      if (data.senderId && data.senderId === currentUser.id) return;
+      if (data.candidate) {
+        setPendingIceCandidates((prev) => [...prev, data.candidate]);
+      }
+    });
+
+    channel.bind(REALTIME_EVENTS.CALL_REJECT, (data: CallRejectPayload) => {
+      stopAllRingtones();
+      toast.error(data.reason || "The call was declined.", "Call Declined");
+      setCallStatus("idle");
+      setCallingTarget(null);
+      setIncomingOfferSdp(null);
+      setRemoteAnswerSdp(null);
+      setPendingIceCandidates([]);
+      setCallConversationId(null);
+    });
+
+    channel.bind(REALTIME_EVENTS.CALL_END, () => {
+      stopAllRingtones();
+      toast.info("Call ended by remote user.", "Call Ended");
+      setCallStatus("idle");
+      setCallingTarget(null);
+      setIncomingOfferSdp(null);
+      setRemoteAnswerSdp(null);
+      setPendingIceCandidates([]);
+      setCallConversationId(null);
+    });
+
     const activeTimers = typingTimerMapRef.current;
     return () => {
       channel.unbind_all();
@@ -432,7 +475,7 @@ export function ChatContainer({
       activeTimers.forEach((t) => clearTimeout(t));
       activeTimers.clear();
     };
-  }, [pusherClient, selectedConversationId, currentUser.id, markAsSeen, refreshConversations]);
+  }, [pusherClient, selectedConversationId, currentUser.id, markAsSeen, refreshConversations, toast]);
 
   // 5. User private channel subscription (incoming messages across all chats & new conversations)
   useEffect(() => {
@@ -451,7 +494,7 @@ export function ChatContainer({
         if (
           data.lastMessage &&
           data.lastMessage.senderId !== currentUser.id &&
-          data.conversationId !== selectedConversationId &&
+          data.conversationId !== selectedConversationIdRef.current &&
           !data.lastMessage.content?.startsWith("CALL:")
         ) {
           playReceiveSound();
@@ -464,7 +507,7 @@ export function ChatContainer({
             return prev;
           }
           const target = prev[index];
-          const isCurrentActive = target.id === selectedConversationId;
+          const isCurrentActive = target.id === selectedConversationIdRef.current;
           const updatedConv: ConversationWithDetails = {
             ...target,
             lastMessage: data.lastMessage || target.lastMessage,
@@ -527,13 +570,19 @@ export function ChatContainer({
 
     // WebRTC: Call Answer received by caller
     userChannel.bind(REALTIME_EVENTS.CALL_ANSWER, (data: CallAnswerPayload) => {
-      setRemoteAnswerSdp(data.sdp);
-      setCallStatus("connected");
+      if (data.calleeId !== currentUser.id) {
+        stopAllRingtones();
+        setRemoteAnswerSdp(data.sdp);
+        setCallStatus("connected");
+      }
     });
 
     // WebRTC: Remote ICE Candidate
     userChannel.bind(REALTIME_EVENTS.CALL_ICE_CANDIDATE, (data: CallIceCandidatePayload) => {
-      setPendingIceCandidate(data.candidate);
+      if (data.senderId && data.senderId === currentUser.id) return;
+      if (data.candidate) {
+        setPendingIceCandidates((prev) => [...prev, data.candidate]);
+      }
     });
 
     // WebRTC: Call Rejected
@@ -544,7 +593,7 @@ export function ChatContainer({
       setCallingTarget(null);
       setIncomingOfferSdp(null);
       setRemoteAnswerSdp(null);
-      setPendingIceCandidate(null);
+      setPendingIceCandidates([]);
       setCallConversationId(null);
     });
 
@@ -556,7 +605,7 @@ export function ChatContainer({
       setCallingTarget(null);
       setIncomingOfferSdp(null);
       setRemoteAnswerSdp(null);
-      setPendingIceCandidate(null);
+      setPendingIceCandidates([]);
       setCallConversationId(null);
     });
 
@@ -564,7 +613,7 @@ export function ChatContainer({
       userChannel.unbind_all();
       pusherClient.unsubscribe(`private-user-${currentUser.id}`);
     };
-  }, [pusherClient, currentUser.id, selectedConversationId, refreshConversations, toast]);
+  }, [pusherClient, currentUser.id, refreshConversations, toast]);
 
   // 5.5 Silent background sync for active conversation messages
   useEffect(() => {
@@ -965,7 +1014,7 @@ export function ChatContainer({
           onEndCall={handleEndCall}
           onSendSignal={handleSendCallSignal}
           remoteAnswerSdp={remoteAnswerSdp}
-          pendingIceCandidate={pendingIceCandidate}
+          pendingIceCandidates={pendingIceCandidates}
         />
       )}
     </div>
