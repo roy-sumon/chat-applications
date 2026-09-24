@@ -1,0 +1,116 @@
+"use client";
+
+import React, { useState } from "react";
+import { signIn } from "next-auth/react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { Input } from "@/components/ui/Input";
+import { Button } from "@/components/ui/Button";
+import { useToast } from "@/components/providers/ToastProvider";
+import { Mail, Lock, MessageSquare } from "lucide-react";
+
+export function LoginForm() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const callbackUrl = searchParams.get("callbackUrl") || "/";
+  const { toast } = useToast();
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setIsLoading(true);
+
+    try {
+      const res = await signIn("credentials", {
+        redirect: false,
+        email,
+        password,
+      });
+
+      if (res?.error) {
+        setError("Invalid email address or password.");
+        toast.error("Invalid credentials provided.", "Login Failed");
+      } else {
+        toast.success("Welcome back!", "Signed In");
+        router.push(callbackUrl);
+        router.refresh();
+      }
+    } catch (err) {
+      console.error("Sign-in error:", err);
+      setError("An unexpected error occurred. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="w-full max-w-md p-8 bg-slate-900/90 border border-slate-800 rounded-3xl shadow-2xl backdrop-blur-xl">
+      <div className="text-center mb-8">
+        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 mb-4 shadow-inner">
+          <MessageSquare className="w-7 h-7" />
+        </div>
+        <h1 className="text-2xl font-bold tracking-tight text-white">Sign In to Pulse</h1>
+        <p className="text-sm text-slate-400 mt-2">
+          Real-time collaborative messaging for modern teams
+        </p>
+      </div>
+
+      {error && (
+        <div className="mb-6 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-medium">
+          {error}
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Input
+          label="Email Address"
+          type="email"
+          autoComplete="email"
+          placeholder="developer@example.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          leftIcon={<Mail className="w-4 h-4" />}
+          required
+        />
+
+        <Input
+          label="Password"
+          type="password"
+          autoComplete="current-password"
+          placeholder="••••••••••••"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          leftIcon={<Lock className="w-4 h-4" />}
+          required
+        />
+
+        <Button
+          type="submit"
+          variant="primary"
+          size="lg"
+          className="w-full mt-2"
+          isLoading={isLoading}
+        >
+          Sign In
+        </Button>
+      </form>
+
+      <div className="mt-6 pt-6 border-t border-slate-800/80 text-center">
+        <p className="text-xs text-slate-400">
+          Don&apos;t have an account yet?{" "}
+          <Link
+            href="/register"
+            className="font-semibold text-indigo-400 hover:text-indigo-300 transition"
+          >
+            Create an account
+          </Link>
+        </p>
+      </div>
+    </div>
+  );
+}
