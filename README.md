@@ -47,15 +47,7 @@ flowchart TD
     APIRoutes --> Storage
 ```
 
----
 
-## Screenshots Placeholder
-
-> Replace these placeholders with high-resolution captures of your deployment.
-
-| Desktop Chat Experience | Mobile Messaging View |
-| :---: | :---: |
-| ![Desktop View Placeholder](https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80) | ![Mobile View Placeholder](https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=400&q=80) |
 
 ---
 
@@ -107,6 +99,9 @@ flowchart TD
 - **Real-Time Signaling**: Dual-channel SDP offer/answer exchange and ICE candidate negotiation via Pusher Channels and private user queues.
 - **In-Call Controls**: Picture-in-picture local preview, camera flip/toggle, microphone mute/unmute, desktop screen sharing, full-screen expansion, and live call timer.
 - **Synthesized Audio Feedback**: Clean telephone ringtone, connected chime, and hangup tones generated dynamically using the Web Audio API with zero external audio assets.
+- **Smart Ringtones (Online vs. Offline)**: Plays dynamic ringing when recipient is live online, and switches to a distinct connecting pulse when the recipient is offline (WhatsApp/Messenger style).
+- **Persistent Call Logs**: Every call (completed or missed) produces a persistent audit log in the conversation thread with call duration, status badge, and an instant "Call Back" button.
+- **Live Ongoing Visualizer**: Displays an animated audio waveform indicator and running timer during active calls.
 
 ---
 
@@ -223,8 +218,8 @@ erDiagram
 
 ### 1. Clone & Install
 ```bash
-git clone https://github.com/your-username/pulse-chat.git
-cd pulse-chat
+git clone https://github.com/roy-sumon/chat-applications.git
+cd chat-applications
 npm install
 ```
 
