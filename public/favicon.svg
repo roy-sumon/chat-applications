@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none">
+  <defs>
+    <linearGradient id="pulse-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5"/>
+      <stop offset="50%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#9333ea"/>
+    </linearGradient>
+    <linearGradient id="pulse-wave" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#4338ca"/>
+      <stop offset="50%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <filter id="bubble-shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#1e1b4b" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Squircle Base with smooth modern radius -->
+  <rect width="64" height="64" rx="16" fill="url(#pulse-bg)"/>
+
+  <!-- Subtle Top Highlight Border -->
+  <rect x="1" y="1" width="62" height="62" rx="15" fill="none" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1"/>
+
+  <!-- Chat Bubble Body with tail -->
+  <g filter="url(#bubble-shadow)">
+    <path d="M 18 13 C 13.5 13 10 16.5 10 21 L 10 32 C 10 36.5 13.5 40 18 40 L 22 40 L 16.5 48 C 15.8 48.9 16.6 50 17.6 49.6 L 27.5 44 L 46 44 C 50.5 44 54 40.5 54 36 L 54 21 C 54 16.5 50.5 13 46 13 Z" 
+          fill="#ffffff"/>
+  </g>
+
+  <!-- Pulse / Heartbeat Waveform inside Bubble -->
+  <path d="M 16 28 L 22 28 L 25.5 19 L 30 38 L 34.5 23 L 37.5 28 L 48 28" 
+        fill="none" 
+        stroke="url(#pulse-wave)" 
+        stroke-width="3.5" 
+        stroke-linecap="round" 
+        stroke-linejoin="round"/>
+
+  <!-- Live Pulse Dot at the crest -->
+  <circle cx="25.5" cy="19" r="2.2" fill="#10b981"/>
+</svg>

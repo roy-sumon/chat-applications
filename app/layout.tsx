@@ -19,6 +19,14 @@ export const metadata: Metadata = {
   title: "Pulse Chat - Real-Time Collaborative Messaging",
   description:
     "Production-quality real-time messaging platform built with Next.js App Router, MongoDB, Prisma, NextAuth, and Pusher.",
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/favicon.ico", sizes: "32x32" },
+    ],
+    shortcut: "/icon.svg",
+    apple: "/icon.svg",
+  },
 };
 
 export default function RootLayout({
