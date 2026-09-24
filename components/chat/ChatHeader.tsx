@@ -4,7 +4,7 @@ import React from "react";
 import { ConversationWithDetails, UserSummary } from "@/types";
 import { Avatar } from "@/components/ui/Avatar";
 import { formatLastSeen } from "@/lib/utils";
-import { ArrowLeft, Users, Search, Info, Download } from "lucide-react";
+import { ArrowLeft, Users, Search, Info, Download, Phone, Video } from "lucide-react";
 
 interface ChatHeaderProps {
   conversation: ConversationWithDetails;
@@ -15,6 +15,7 @@ interface ChatHeaderProps {
   onOpenDetails: () => void;
   onToggleSearch: () => void;
   onExportChat?: () => void;
+  onStartCall?: (type: "AUDIO" | "VIDEO") => void;
   isSearching: boolean;
 }
 
@@ -27,6 +28,7 @@ export function ChatHeader({
   onOpenDetails,
   onToggleSearch,
   onExportChat,
+  onStartCall,
   isSearching,
 }: ChatHeaderProps) {
   const isGroup = conversation.type === "GROUP";
@@ -102,6 +104,25 @@ export function ChatHeader({
 
       {/* Action Buttons */}
       <div className="flex items-center gap-1">
+        {onStartCall && !isGroup && (
+          <>
+            <button
+              onClick={() => onStartCall("AUDIO")}
+              title="Start voice call"
+              className="p-2 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded-xl transition"
+            >
+              <Phone className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => onStartCall("VIDEO")}
+              title="Start video call"
+              className="p-2 text-slate-400 hover:text-indigo-400 hover:bg-slate-800 rounded-xl transition"
+            >
+              <Video className="w-4 h-4" />
+            </button>
+          </>
+        )}
+
         {onExportChat && (
           <button
             onClick={onExportChat}

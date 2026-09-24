@@ -8,6 +8,12 @@ export const REALTIME_EVENTS = {
   CONVERSATION_CREATED: "conversation-created",
   CONVERSATION_UPDATED: "conversation-updated",
   MEMBER_UPDATED: "member-updated",
+  // WebRTC Call Signaling Events
+  CALL_OFFER: "call-offer",
+  CALL_ANSWER: "call-answer",
+  CALL_ICE_CANDIDATE: "call-ice-candidate",
+  CALL_REJECT: "call-reject",
+  CALL_END: "call-end",
 } as const;
 
 export type RealtimeEventType = (typeof REALTIME_EVENTS)[keyof typeof REALTIME_EVENTS];
@@ -29,6 +35,40 @@ export interface SeenEventPayload {
   userId: string;
   readAt: string;
   messageIds: string[];
+}
+
+export type CallType = "AUDIO" | "VIDEO";
+
+export interface CallOfferPayload {
+  conversationId: string;
+  caller: {
+    id: string;
+    name: string;
+    avatar?: string | null;
+  };
+  calleeId: string;
+  callType: CallType;
+  sdp: RTCSessionDescriptionInit;
+}
+
+export interface CallAnswerPayload {
+  conversationId: string;
+  calleeId: string;
+  sdp: RTCSessionDescriptionInit;
+}
+
+export interface CallIceCandidatePayload {
+  conversationId: string;
+  candidate: RTCIceCandidateInit;
+}
+
+export interface CallRejectPayload {
+  conversationId: string;
+  reason?: string;
+}
+
+export interface CallEndPayload {
+  conversationId: string;
 }
 
 // Client-side realtime interfaces

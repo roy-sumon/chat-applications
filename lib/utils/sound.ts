@@ -92,3 +92,110 @@ export const playReceiveSound = (): void => {
     // audio context not allowed yet
   }
 };
+
+// Start soft ringing sound for incoming/outgoing call (returns stop function)
+export const startRingtone = (): (() => void) => {
+  if (!isSoundEnabled()) return () => {};
+
+  let isPlaying = true;
+  let timer: NodeJS.Timeout | null = null;
+
+  const playRingPulse = () => {
+    if (!isPlaying) return;
+    try {
+      const ctx = getAudioContext();
+      if (!ctx) return;
+
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc1.type = "sine";
+      osc2.type = "sine";
+      osc1.frequency.setValueAtTime(440, ctx.currentTime); // A4
+      osc2.frequency.setValueAtTime(480, ctx.currentTime); // B4
+
+      gain.gain.setValueAtTime(0.06, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2);
+
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc1.start(ctx.currentTime);
+      osc2.start(ctx.currentTime);
+      osc1.stop(ctx.currentTime + 1.2);
+      osc2.stop(ctx.currentTime + 1.2);
+
+      timer = setTimeout(playRingPulse, 3000);
+    } catch {
+      // ignore
+    }
+  };
+
+  playRingPulse();
+
+  return () => {
+    isPlaying = false;
+    if (timer) clearTimeout(timer);
+  };
+};
+
+// Play short phone hang-up sound
+export const playCallEndSound = (): void => {
+  if (!isSoundEnabled()) return;
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
+    for (let i = 0; i < 2; i++) {
+      const startTime = ctx.currentTime + i * 0.15;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(425, startTime);
+
+      gain.gain.setValueAtTime(0.07, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.1);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(startTime);
+      osc.stop(startTime + 0.1);
+    }
+  } catch {
+    // ignore
+  }
+};
+
+// Play pleasant ascending chime on call connection
+export const playCallConnectSound = (): void => {
+  if (!isSoundEnabled()) return;
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
+    const notes = [523.25, 659.25, 783.99]; // C5, E5, G5
+    notes.forEach((freq, idx) => {
+      const startTime = ctx.currentTime + idx * 0.08;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, startTime);
+
+      gain.gain.setValueAtTime(0.07, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.12);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(startTime);
+      osc.stop(startTime + 0.12);
+    });
+  } catch {
+    // ignore
+  }
+};

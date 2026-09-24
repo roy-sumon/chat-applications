@@ -102,6 +102,12 @@ flowchart TD
 - **In-Conversation Search**: Full-text message search inside active conversations with match highlights.
 - **Real-Time Notifications**: Unread badges in the sidebar, in-app notifications, and browser notification integration.
 
+### 8. WebRTC 1-to-1 Audio & Video Calling
+- **Direct P2P Media Streams**: Low-latency video and audio calling powered by native WebRTC with public Google STUN servers (`stun:stun.l.google.com:19302`).
+- **Real-Time Signaling**: Dual-channel SDP offer/answer exchange and ICE candidate negotiation via Pusher Channels and private user queues.
+- **In-Call Controls**: Picture-in-picture local preview, camera flip/toggle, microphone mute/unmute, desktop screen sharing, full-screen expansion, and live call timer.
+- **Synthesized Audio Feedback**: Clean telephone ringtone, connected chime, and hangup tones generated dynamically using the Web Audio API with zero external audio assets.
+
 ---
 
 ## Tech Stack
@@ -114,7 +120,7 @@ flowchart TD
 | **Database** | [MongoDB Atlas](https://www.mongodb.com/atlas) with replica set support |
 | **ORM** | [Prisma 6](https://www.prisma.io/) (`provider = "mongodb"`) |
 | **Authentication** | [Auth.js / NextAuth v5](https://authjs.dev/) with Credentials & JWT |
-| **Realtime** | [Pusher Server](https://pusher.com/) & [Pusher JS](https://github.com/pusher/pusher-js) (Vercel serverless compatible) |
+| **Realtime & Calling**| [WebRTC](https://webrtc.org/) (P2P audio/video/screen), [Pusher Channels](https://pusher.com/) |
 | **Validation** | [Zod 3](https://zod.dev/) for strict schema validation across all boundaries |
 | **Testing** | [Vitest](https://vitest.dev/) for unit and authorization policy test suites |
 | **Icons** | [Lucide React](https://lucide.dev/) |

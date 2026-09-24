@@ -32,7 +32,7 @@ interface MessageItemProps {
 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "🔥", "😮", "🎉"];
 
-export function MessageItem({
+function MessageItemComponent({
   message,
   currentUserId,
   isGroup = false,
@@ -329,3 +329,5 @@ export function MessageItem({
     </div>
   );
 }
+
+export const MessageItem = React.memo(MessageItemComponent);

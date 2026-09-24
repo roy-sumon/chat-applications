@@ -16,8 +16,17 @@ import { NewChatModal } from "./NewChatModal";
 import { NewGroupModal } from "./NewGroupModal";
 import { GroupDetailsModal } from "./GroupDetailsModal";
 import { ProfileModal } from "./ProfileModal";
+import { CallModal, CallStatus } from "./CallModal";
 import { useRealtimeContext } from "@/components/providers/RealtimeProvider";
-import { REALTIME_EVENTS, TypingEventPayload, SeenEventPayload } from "@/lib/realtime/types";
+import {
+  REALTIME_EVENTS,
+  TypingEventPayload,
+  SeenEventPayload,
+  CallOfferPayload,
+  CallAnswerPayload,
+  CallIceCandidatePayload,
+  CallRejectPayload,
+} from "@/lib/realtime/types";
 import { useToast } from "@/components/providers/ToastProvider";
 import { playReceiveSound } from "@/lib/utils/sound";
 import { MessageSquare } from "lucide-react";
@@ -59,6 +68,24 @@ export function ChatContainer({
   const [isGroupDetailsOpen, setIsGroupDetailsOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
 
+  // WebRTC Call State
+  const [callStatus, setCallStatus] = useState<CallStatus>("idle");
+  const [activeCallType, setActiveCallType] = useState<"AUDIO" | "VIDEO">("VIDEO");
+  const [callingTarget, setCallingTarget] = useState<{
+    id: string;
+    name: string;
+    avatar?: string | null;
+  } | null>(null);
+  const [incomingOfferSdp, setIncomingOfferSdp] = useState<RTCSessionDescriptionInit | null>(null);
+  const [remoteAnswerSdp, setRemoteAnswerSdp] = useState<RTCSessionDescriptionInit | null>(null);
+  const [pendingIceCandidate, setPendingIceCandidate] = useState<RTCIceCandidateInit | null>(null);
+  const [callConversationId, setCallConversationId] = useState<string | null>(null);
+  const callStatusRef = useRef<CallStatus>("idle");
+
+  useEffect(() => {
+    callStatusRef.current = callStatus;
+  }, [callStatus]);
+
   // Mobile navigation state: show sidebar or active chat
   const [mobileView, setMobileView] = useState<"list" | "chat">(
     initialSelectedId ? "chat" : "list"
@@ -72,6 +99,95 @@ export function ChatContainer({
   const activeConversation = conversations.find(
     (c) => c.id === selectedConversationId
   );
+
+  // WebRTC Call Signaling sender
+  const handleSendCallSignal = useCallback(
+    async (payload: {
+      action: "offer" | "answer" | "ice-candidate" | "reject" | "end";
+      targetUserId: string;
+      callType?: "AUDIO" | "VIDEO";
+      sdp?: RTCSessionDescriptionInit;
+      candidate?: RTCIceCandidateInit;
+      reason?: string;
+    }) => {
+      const convId = callConversationId || selectedConversationId;
+      if (!convId) return;
+
+      try {
+        await fetch(`/api/conversations/${convId}/call`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch (err) {
+        console.error("Failed to send call signal:", err);
+      }
+    },
+    [callConversationId, selectedConversationId]
+  );
+
+  const handleStartCall = useCallback(
+    (type: "AUDIO" | "VIDEO") => {
+      if (!activeConversation) return;
+
+      const otherMember = activeConversation.members?.find(
+        (m) => m.userId !== currentUser.id
+      );
+
+      if (!otherMember || !otherMember.user) {
+        toast.error("Participant not found for call", "Cannot Call");
+        return;
+      }
+
+      setCallConversationId(activeConversation.id);
+      setCallingTarget({
+        id: otherMember.user.id,
+        name: otherMember.user.name,
+        avatar: otherMember.user.avatar,
+      });
+      setActiveCallType(type);
+      setIncomingOfferSdp(null);
+      setRemoteAnswerSdp(null);
+      setPendingIceCandidate(null);
+      setCallStatus("calling");
+    },
+    [activeConversation, currentUser.id, toast]
+  );
+
+  const handleAcceptIncoming = useCallback(() => {
+    setCallStatus("connected");
+  }, []);
+
+  const handleRejectIncoming = useCallback(async () => {
+    if (callingTarget && (callConversationId || selectedConversationId)) {
+      await handleSendCallSignal({
+        action: "reject",
+        targetUserId: callingTarget.id,
+        reason: "Call declined",
+      });
+    }
+    setCallStatus("idle");
+    setCallingTarget(null);
+    setIncomingOfferSdp(null);
+    setRemoteAnswerSdp(null);
+    setPendingIceCandidate(null);
+    setCallConversationId(null);
+  }, [callingTarget, callConversationId, selectedConversationId, handleSendCallSignal]);
+
+  const handleEndCall = useCallback(async () => {
+    if (callingTarget && (callConversationId || selectedConversationId)) {
+      await handleSendCallSignal({
+        action: "end",
+        targetUserId: callingTarget.id,
+      });
+    }
+    setCallStatus("idle");
+    setCallingTarget(null);
+    setIncomingOfferSdp(null);
+    setRemoteAnswerSdp(null);
+    setPendingIceCandidate(null);
+    setCallConversationId(null);
+  }, [callingTarget, callConversationId, selectedConversationId, handleSendCallSignal]);
 
   // 1. Mark messages as seen
   const markAsSeen = useCallback(
@@ -362,11 +478,72 @@ export function ChatContainer({
       }
     });
 
+    // WebRTC: Incoming Call Offer
+    userChannel.bind(REALTIME_EVENTS.CALL_OFFER, (data: CallOfferPayload) => {
+      if (data.calleeId && data.calleeId !== currentUser.id) return;
+
+      if (callStatusRef.current !== "idle") {
+        fetch(`/api/conversations/${data.conversationId}/call`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "reject",
+            targetUserId: data.caller.id,
+            reason: "User is busy on another call",
+          }),
+        }).catch(() => {});
+        return;
+      }
+
+      setCallConversationId(data.conversationId);
+      setCallingTarget({
+        id: data.caller.id,
+        name: data.caller.name,
+        avatar: data.caller.avatar,
+      });
+      setActiveCallType((data.callType as "AUDIO" | "VIDEO") || "VIDEO");
+      setIncomingOfferSdp(data.sdp);
+      setCallStatus("incoming");
+    });
+
+    // WebRTC: Call Answer received by caller
+    userChannel.bind(REALTIME_EVENTS.CALL_ANSWER, (data: CallAnswerPayload) => {
+      setRemoteAnswerSdp(data.sdp);
+      setCallStatus("connected");
+    });
+
+    // WebRTC: Remote ICE Candidate
+    userChannel.bind(REALTIME_EVENTS.CALL_ICE_CANDIDATE, (data: CallIceCandidatePayload) => {
+      setPendingIceCandidate(data.candidate);
+    });
+
+    // WebRTC: Call Rejected
+    userChannel.bind(REALTIME_EVENTS.CALL_REJECT, (data: CallRejectPayload) => {
+      toast.error(data.reason || "The call was declined.", "Call Declined");
+      setCallStatus("idle");
+      setCallingTarget(null);
+      setIncomingOfferSdp(null);
+      setRemoteAnswerSdp(null);
+      setPendingIceCandidate(null);
+      setCallConversationId(null);
+    });
+
+    // WebRTC: Call Ended by remote peer
+    userChannel.bind(REALTIME_EVENTS.CALL_END, () => {
+      toast.info("Call ended by remote user.", "Call Ended");
+      setCallStatus("idle");
+      setCallingTarget(null);
+      setIncomingOfferSdp(null);
+      setRemoteAnswerSdp(null);
+      setPendingIceCandidate(null);
+      setCallConversationId(null);
+    });
+
     return () => {
       userChannel.unbind_all();
       pusherClient.unsubscribe(`private-user-${currentUser.id}`);
     };
-  }, [pusherClient, currentUser.id, selectedConversationId, refreshConversations]);
+  }, [pusherClient, currentUser.id, selectedConversationId, refreshConversations, toast]);
 
   // 5.5 Silent background sync for active conversation messages
   useEffect(() => {
@@ -659,6 +836,7 @@ export function ChatContainer({
               onOpenDetails={() => setIsGroupDetailsOpen(true)}
               onToggleSearch={() => setIsSearchingInChat(!isSearchingInChat)}
               onExportChat={handleExportChat}
+              onStartCall={handleStartCall}
               isSearching={isSearchingInChat}
             />
 
@@ -750,6 +928,23 @@ export function ChatContainer({
         currentUser={currentUser}
         onProfileUpdated={(updated) => setCurrentUser(updated)}
       />
+
+      {callStatus !== "idle" && callingTarget && (
+        <CallModal
+          conversationId={callConversationId || selectedConversationId || ""}
+          currentUserId={currentUser.id}
+          otherUser={callingTarget}
+          callType={activeCallType}
+          callStatus={callStatus}
+          incomingOfferSdp={incomingOfferSdp}
+          onAcceptIncoming={handleAcceptIncoming}
+          onRejectIncoming={handleRejectIncoming}
+          onEndCall={handleEndCall}
+          onSendSignal={handleSendCallSignal}
+          remoteAnswerSdp={remoteAnswerSdp}
+          pendingIceCandidate={pendingIceCandidate}
+        />
+      )}
     </div>
   );
 }

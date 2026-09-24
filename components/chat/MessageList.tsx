@@ -40,10 +40,11 @@ export function MessageList({
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const isNearBottomRef = useRef(true);
 
-  // Auto-scroll to bottom on initial load and when new messages arrive
+  // Auto-scroll to bottom on initial load and when new messages arrive if near bottom
   useEffect(() => {
-    if (!isLoadingMore) {
+    if (!isLoadingMore && isNearBottomRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages.length, typingUsers.length, isLoadingMore]);
@@ -52,8 +53,9 @@ export function MessageList({
   const handleScroll = () => {
     if (!containerRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
-    const isFarFromBottom = scrollHeight - scrollTop - clientHeight > 300;
-    setShowScrollBottom(isFarFromBottom);
+    const isFar = scrollHeight - scrollTop - clientHeight > 200;
+    isNearBottomRef.current = !isFar;
+    setShowScrollBottom(isFar);
   };
 
   const scrollToBottom = () => {
