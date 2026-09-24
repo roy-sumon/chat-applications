@@ -28,7 +28,7 @@ import {
   CallRejectPayload,
 } from "@/lib/realtime/types";
 import { useToast } from "@/components/providers/ToastProvider";
-import { playReceiveSound } from "@/lib/utils/sound";
+import { playReceiveSound, stopAllRingtones } from "@/lib/utils/sound";
 import { MessageSquare } from "lucide-react";
 
 interface ChatContainerProps {
@@ -161,6 +161,7 @@ export function ChatContainer({
   }, []);
 
   const handleRejectIncoming = useCallback(async () => {
+    stopAllRingtones();
     if (callingTarget && (callConversationId || selectedConversationId)) {
       await handleSendCallSignal({
         action: "reject",
@@ -179,6 +180,7 @@ export function ChatContainer({
 
   const handleEndCall = useCallback(
     async (details?: { wasConnected: boolean; duration: number }) => {
+      stopAllRingtones();
       const wasConn = details?.wasConnected ?? (callStatusRef.current === "connected");
       const dur = details?.duration ?? 0;
 
@@ -531,6 +533,7 @@ export function ChatContainer({
 
     // WebRTC: Call Rejected
     userChannel.bind(REALTIME_EVENTS.CALL_REJECT, (data: CallRejectPayload) => {
+      stopAllRingtones();
       toast.error(data.reason || "The call was declined.", "Call Declined");
       setCallStatus("idle");
       setCallingTarget(null);
@@ -542,6 +545,7 @@ export function ChatContainer({
 
     // WebRTC: Call Ended by remote peer
     userChannel.bind(REALTIME_EVENTS.CALL_END, () => {
+      stopAllRingtones();
       toast.info("Call ended by remote user.", "Call Ended");
       setCallStatus("idle");
       setCallingTarget(null);

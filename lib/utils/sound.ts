@@ -18,6 +18,18 @@ const getAudioContext = (): AudioContext | null => {
   return audioCtx;
 };
 
+// Auto-unlock AudioContext on first user interaction anywhere in the window
+if (typeof window !== "undefined") {
+  const unlockAudioContext = () => {
+    if (audioCtx && audioCtx.state === "suspended") {
+      audioCtx.resume().catch(() => {});
+    }
+  };
+  window.addEventListener("click", unlockAudioContext, { passive: true });
+  window.addEventListener("touchstart", unlockAudioContext, { passive: true });
+  window.addEventListener("keydown", unlockAudioContext, { passive: true });
+}
+
 export const isSoundEnabled = (): boolean => {
   if (typeof window === "undefined") return true;
   const saved = localStorage.getItem("pulse_sound_enabled");
@@ -93,18 +105,52 @@ export const playReceiveSound = (): void => {
   }
 };
 
+// Global registry of active ringtone resources
+let activeRingtoneTimers: NodeJS.Timeout[] = [];
+let activeRingtoneOscillators: OscillatorNode[] = [];
+let activeRingtoneGains: GainNode[] = [];
+
+// Instantly silence and terminate all running ringtones and pending pulses
+export const stopAllRingtones = (): void => {
+  activeRingtoneTimers.forEach((t) => clearTimeout(t));
+  activeRingtoneTimers = [];
+
+  activeRingtoneGains.forEach((g) => {
+    try {
+      if (audioCtx) {
+        g.gain.cancelScheduledValues(audioCtx.currentTime);
+        g.gain.setValueAtTime(0, audioCtx.currentTime);
+      }
+      g.disconnect();
+    } catch {}
+  });
+  activeRingtoneGains = [];
+
+  activeRingtoneOscillators.forEach((osc) => {
+    try {
+      osc.stop();
+      osc.disconnect();
+    } catch {}
+  });
+  activeRingtoneOscillators = [];
+};
+
 // Start soft ringing sound for incoming/outgoing call (returns stop function)
 export const startRingtone = (): (() => void) => {
+  stopAllRingtones();
+
   if (!isSoundEnabled()) return () => {};
 
   let isPlaying = true;
-  let timer: NodeJS.Timeout | null = null;
 
   const playRingPulse = () => {
     if (!isPlaying) return;
     try {
       const ctx = getAudioContext();
       if (!ctx) return;
+      if (ctx.state === "suspended") {
+        ctx.resume().catch(() => {});
+      }
 
       const osc1 = ctx.createOscillator();
       const osc2 = ctx.createOscillator();
@@ -115,19 +161,28 @@ export const startRingtone = (): (() => void) => {
       osc1.frequency.setValueAtTime(440, ctx.currentTime); // A4
       osc2.frequency.setValueAtTime(480, ctx.currentTime); // B4
 
-      gain.gain.setValueAtTime(0.06, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2);
+      gain.gain.setValueAtTime(0.065, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 1.2);
 
       osc1.connect(gain);
       osc2.connect(gain);
       gain.connect(ctx.destination);
+
+      activeRingtoneOscillators.push(osc1, osc2);
+      activeRingtoneGains.push(gain);
 
       osc1.start(ctx.currentTime);
       osc2.start(ctx.currentTime);
       osc1.stop(ctx.currentTime + 1.2);
       osc2.stop(ctx.currentTime + 1.2);
 
-      timer = setTimeout(playRingPulse, 3000);
+      setTimeout(() => {
+        activeRingtoneOscillators = activeRingtoneOscillators.filter((o) => o !== osc1 && o !== osc2);
+        activeRingtoneGains = activeRingtoneGains.filter((g) => g !== gain);
+      }, 1300);
+
+      const timer = setTimeout(playRingPulse, 3000);
+      activeRingtoneTimers.push(timer);
     } catch {
       // ignore
     }
@@ -137,22 +192,26 @@ export const startRingtone = (): (() => void) => {
 
   return () => {
     isPlaying = false;
-    if (timer) clearTimeout(timer);
+    stopAllRingtones();
   };
 };
 
 // Start distinct slow connecting tone when calling an offline recipient (WhatsApp / Messenger style)
 export const startOfflineRingtone = (): (() => void) => {
+  stopAllRingtones();
+
   if (!isSoundEnabled()) return () => {};
 
   let isPlaying = true;
-  let timer: NodeJS.Timeout | null = null;
 
   const playOfflinePulse = () => {
     if (!isPlaying) return;
     try {
       const ctx = getAudioContext();
       if (!ctx) return;
+      if (ctx.state === "suspended") {
+        ctx.resume().catch(() => {});
+      }
 
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -160,16 +219,25 @@ export const startOfflineRingtone = (): (() => void) => {
       osc.type = "sine";
       osc.frequency.setValueAtTime(360, ctx.currentTime); // Low single connecting tone
 
-      gain.gain.setValueAtTime(0.045, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+      gain.gain.setValueAtTime(0.05, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
 
       osc.connect(gain);
       gain.connect(ctx.destination);
 
+      activeRingtoneOscillators.push(osc);
+      activeRingtoneGains.push(gain);
+
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.35);
 
-      timer = setTimeout(playOfflinePulse, 2200);
+      setTimeout(() => {
+        activeRingtoneOscillators = activeRingtoneOscillators.filter((o) => o !== osc);
+        activeRingtoneGains = activeRingtoneGains.filter((g) => g !== gain);
+      }, 400);
+
+      const timer = setTimeout(playOfflinePulse, 2200);
+      activeRingtoneTimers.push(timer);
     } catch {
       // ignore
     }
@@ -179,16 +247,20 @@ export const startOfflineRingtone = (): (() => void) => {
 
   return () => {
     isPlaying = false;
-    if (timer) clearTimeout(timer);
+    stopAllRingtones();
   };
 };
 
 // Play short phone hang-up sound
 export const playCallEndSound = (): void => {
+  stopAllRingtones();
   if (!isSoundEnabled()) return;
   try {
     const ctx = getAudioContext();
     if (!ctx) return;
+    if (ctx.state === "suspended") {
+      ctx.resume().catch(() => {});
+    }
 
     for (let i = 0; i < 2; i++) {
       const startTime = ctx.currentTime + i * 0.15;
@@ -214,10 +286,14 @@ export const playCallEndSound = (): void => {
 
 // Play pleasant ascending chime on call connection
 export const playCallConnectSound = (): void => {
+  stopAllRingtones();
   if (!isSoundEnabled()) return;
   try {
     const ctx = getAudioContext();
     if (!ctx) return;
+    if (ctx.state === "suspended") {
+      ctx.resume().catch(() => {});
+    }
 
     const notes = [523.25, 659.25, 783.99]; // C5, E5, G5
     notes.forEach((freq, idx) => {

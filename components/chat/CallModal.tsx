@@ -16,6 +16,7 @@ import {
 import {
   startRingtone,
   startOfflineRingtone,
+  stopAllRingtones,
   playCallConnectSound,
   playCallEndSound,
 } from "@/lib/utils/sound";
@@ -88,12 +89,13 @@ export function CallModal({
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const callTimerRef = useRef<NodeJS.Timeout | null>(null);
   const ringtoneStopRef = useRef<(() => void) | null>(null);
   const { toast } = useToast();
 
-  // 1. Ringtone for incoming / calling
+  // 1. Ringtone for incoming / calling with instant cleanup
   useEffect(() => {
     if (callStatus === "incoming") {
       ringtoneStopRef.current = startRingtone();
@@ -104,6 +106,7 @@ export function CallModal({
         ringtoneStopRef.current = startOfflineRingtone();
       }
     } else {
+      stopAllRingtones();
       if (ringtoneStopRef.current) {
         ringtoneStopRef.current();
         ringtoneStopRef.current = null;
@@ -111,6 +114,7 @@ export function CallModal({
     }
 
     return () => {
+      stopAllRingtones();
       if (ringtoneStopRef.current) {
         ringtoneStopRef.current();
         ringtoneStopRef.current = null;
@@ -118,9 +122,17 @@ export function CallModal({
     };
   }, [callStatus, isOtherUserOnline]);
 
+  // Clean up any audio on unmount
+  useEffect(() => {
+    return () => {
+      stopAllRingtones();
+    };
+  }, []);
+
   // 2. Call duration timer when connected
   useEffect(() => {
     if (callStatus === "connected") {
+      stopAllRingtones();
       playCallConnectSound();
       setDurationSeconds(0);
       callTimerRef.current = setInterval(() => {
@@ -143,6 +155,7 @@ export function CallModal({
 
   // Clean up media tracks & peer connection on call end
   const cleanupStreams = useCallback(() => {
+    stopAllRingtones();
     if (localStream) {
       localStream.getTracks().forEach((track) => track.stop());
       setLocalStream(null);
@@ -161,10 +174,21 @@ export function CallModal({
     }
   }, [localStream]);
 
-  // Handle remote video element binding
+  // Handle remote audio & video element binding
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
+    if (remoteStream) {
+      if (remoteAudioRef.current) {
+        remoteAudioRef.current.srcObject = remoteStream;
+        remoteAudioRef.current.play().catch((err) => {
+          console.warn("Remote audio play notice:", err);
+        });
+      }
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = remoteStream;
+        remoteVideoRef.current.play().catch((err) => {
+          console.warn("Remote video play notice:", err);
+        });
+      }
     }
   }, [remoteStream]);
 
@@ -213,6 +237,7 @@ export function CallModal({
       });
     } catch {
       toast.error("Could not access camera/microphone.", "Permission Denied");
+      stopAllRingtones();
       onEndCall();
     }
   }, [callType, otherUser.id, onSendSignal, onEndCall, toast]);
@@ -226,6 +251,11 @@ export function CallModal({
 
   // 4. Handle Incoming Call Answer (Callee side accepts)
   const handleAcceptCall = async () => {
+    stopAllRingtones();
+    if (ringtoneStopRef.current) {
+      ringtoneStopRef.current();
+      ringtoneStopRef.current = null;
+    }
     onAcceptIncoming();
 
     try {
@@ -269,6 +299,7 @@ export function CallModal({
       }
     } catch {
       toast.error("Could not access camera/microphone.", "Permission Denied");
+      stopAllRingtones();
       onEndCall();
     }
   };
@@ -368,6 +399,11 @@ export function CallModal({
 
   // 10. End Call
   const handleHangup = useCallback(() => {
+    stopAllRingtones();
+    if (ringtoneStopRef.current) {
+      ringtoneStopRef.current();
+      ringtoneStopRef.current = null;
+    }
     playCallEndSound();
     cleanupStreams();
     const wasConnected = callStatus === "connected";
@@ -434,7 +470,14 @@ export function CallModal({
 
           <div className="flex items-center justify-center gap-6 pt-2">
             <button
-              onClick={onRejectIncoming}
+              onClick={() => {
+                stopAllRingtones();
+                if (ringtoneStopRef.current) {
+                  ringtoneStopRef.current();
+                  ringtoneStopRef.current = null;
+                }
+                onRejectIncoming();
+              }}
               className="w-14 h-14 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center shadow-lg transition active:scale-95"
               title="Decline"
             >
@@ -476,7 +519,10 @@ export function CallModal({
                   <span className="text-amber-400 animate-pulse font-medium">Calling (Offline)...</span>
                 )
               ) : (
-                <span className="text-emerald-400 font-semibold">{formatTimer(durationSeconds)}</span>
+                <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse" />
+                  Connected · {formatTimer(durationSeconds)}
+                </span>
               )}
             </p>
           </div>
@@ -495,6 +541,9 @@ export function CallModal({
 
       {/* Main Video / Audio Body */}
       <div className="flex-1 relative flex items-center justify-center bg-slate-950 overflow-hidden">
+        {/* Hidden Audio element for remote audio playback in all call types */}
+        <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
+
         {callType === "VIDEO" && remoteStream ? (
           <video
             ref={remoteVideoRef}
@@ -503,25 +552,53 @@ export function CallModal({
             className="w-full h-full object-cover"
           />
         ) : (
-          <div className="flex flex-col items-center justify-center p-8 space-y-4 animate-in fade-in">
+          <div className="flex flex-col items-center justify-center p-8 space-y-5 animate-in fade-in">
             <div className="relative">
-              <span className="absolute -inset-4 rounded-full bg-indigo-500/20 animate-pulse" />
+              {callStatus === "connected" && (
+                <>
+                  <span className="absolute -inset-6 rounded-full bg-emerald-500/15 animate-ping [animation-duration:2.5s]" />
+                  <span className="absolute -inset-3 rounded-full bg-emerald-500/25 animate-pulse" />
+                </>
+              )}
+              {callStatus === "calling" && (
+                <span className="absolute -inset-4 rounded-full bg-indigo-500/20 animate-pulse" />
+              )}
               <Avatar
                 src={otherUser.avatar}
                 name={otherUser.name}
                 size="xl"
-                className="relative z-10 border-4 border-slate-800 shadow-2xl"
+                className={`relative z-10 border-4 shadow-2xl transition-all duration-300 ${
+                  callStatus === "connected" ? "border-emerald-500 ring-4 ring-emerald-500/30" : "border-slate-800"
+                }`}
               />
             </div>
-            <div className="text-center">
-              <h3 className="text-xl font-bold text-white">{otherUser.name}</h3>
-              <p className="text-xs text-slate-400 mt-1">
-                {callStatus === "calling"
-                  ? isOtherUserOnline
-                    ? "Ringing phone..."
-                    : "User is currently offline (Calling...)"
-                  : "Audio Call Connected"}
-              </p>
+            <div className="text-center space-y-2">
+              <h3 className="text-xl font-bold text-white tracking-tight">{otherUser.name}</h3>
+
+              {callStatus === "calling" && (
+                <p className="text-xs text-slate-400 mt-1">
+                  {isOtherUserOnline
+                    ? "Ringing device..."
+                    : "User is currently offline (Calling...)"}
+                </p>
+              )}
+
+              {callStatus === "connected" && (
+                <div className="flex flex-col items-center gap-2.5">
+                  {/* Bouncing Audio Waveform Bars */}
+                  <div className="flex items-center gap-1.5 h-6 px-3 py-1 bg-slate-900/80 rounded-full border border-slate-800">
+                    <span className="w-1 bg-emerald-400 rounded-full animate-bounce [animation-delay:0s] h-3" />
+                    <span className="w-1 bg-emerald-400 rounded-full animate-bounce [animation-delay:0.15s] h-5" />
+                    <span className="w-1 bg-emerald-400 rounded-full animate-bounce [animation-delay:0.3s] h-3" />
+                    <span className="w-1 bg-emerald-400 rounded-full animate-bounce [animation-delay:0.1s] h-6" />
+                    <span className="w-1 bg-emerald-400 rounded-full animate-bounce [animation-delay:0.25s] h-4" />
+                  </div>
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>Call Ongoing · {formatTimer(durationSeconds)}</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
