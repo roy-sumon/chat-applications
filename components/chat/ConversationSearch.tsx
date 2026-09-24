@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Search, X, Loader2 } from "lucide-react";
+import { Search, X, Loader2, MessageSquare } from "lucide-react";
 import { formatMessageTime } from "@/lib/utils";
 
 interface ConversationSearchProps {

@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { ConversationWithDetails, UserSummary } from "@/types";
-import { UserPlus, UserMinus, LogOut, Loader2, Save } from "lucide-react";
+import { UserPlus, UserMinus, ShieldAlert, LogOut, Loader2, Save } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 
 interface GroupDetailsModalProps {

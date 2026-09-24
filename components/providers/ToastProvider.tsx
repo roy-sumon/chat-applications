@@ -84,5 +84,5 @@ export function useToast() {
   if (!context) {
     throw new Error("useToast must be used within a ToastProvider");
   }
-  return { toast: context.toast, ...context.toast };
+  return context.toast;
 }
