@@ -1,11 +1,22 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { Send, Paperclip, Smile, X, FileText, Image as ImageIcon, Loader2 } from "lucide-react";
+import {
+  Send,
+  Paperclip,
+  Smile,
+  X,
+  FileText,
+  Image as ImageIcon,
+  Loader2,
+  Mic,
+  Square,
+} from "lucide-react";
 import { EmojiPicker } from "./EmojiPicker";
 import { MessageWithDetails } from "@/types";
 import { formatFileSize, cn } from "@/lib/utils";
 import { useToast } from "@/components/providers/ToastProvider";
+import { playSendSound } from "@/lib/utils/sound";
 
 interface MessageInputProps {
   conversationId: string;
@@ -38,6 +49,9 @@ export function MessageInput({
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+
   const [attachment, setAttachment] = useState<{
     url: string;
     name: string;
@@ -50,6 +64,10 @@ export function MessageInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isTypingRef = useRef(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isCancelledRef = useRef(false);
   const { toast } = useToast();
 
   // Populate content if editing
@@ -66,6 +84,16 @@ export function MessageInput({
       textareaRef.current?.focus();
     }
   }, [replyingTo]);
+
+  // Clean up recording timers on unmount
+  useEffect(() => {
+    return () => {
+      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
+    };
+  }, []);
 
   // Typing indicator broadcast
   const sendTypingStatus = async (isTyping: boolean) => {
@@ -139,14 +167,118 @@ export function MessageInput({
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
+  // Start voice note recording
+  const startRecording = async () => {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        toast.error("Microphone recording is not supported in this browser.", "Not Supported");
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+      isCancelledRef.current = false;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        // Stop audio tracks
+        stream.getTracks().forEach((track) => track.stop());
+
+        if (isCancelledRef.current) {
+          audioChunksRef.current = [];
+          return;
+        }
+
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        if (audioBlob.size < 500) {
+          toast.info("Voice message too short.", "Cancelled");
+          return;
+        }
+
+        setIsUploading(true);
+        try {
+          const formData = new FormData();
+          formData.append("file", audioBlob, `voice-${Date.now()}.webm`);
+
+          const res = await fetch("/api/upload", {
+            method: "POST",
+            body: formData,
+          });
+
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.error || "Failed to upload voice note");
+          }
+
+          await onSendMessage({
+            content: "🎤 Voice Message",
+            type: "FILE",
+            attachmentUrl: data.url,
+            attachmentName: `Voice Note (${recordingSeconds}s)`,
+            attachmentSize: audioBlob.size,
+            attachmentType: "audio/webm",
+            replyToId: replyingTo ? replyingTo.id : null,
+          });
+
+          playSendSound();
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : "Voice note upload failed";
+          toast.error(msg, "Error");
+        } finally {
+          setIsUploading(false);
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingSeconds(0);
+
+      recordTimerRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch {
+      toast.error("Microphone access denied. Please allow microphone permissions.", "Permission Error");
     }
   };
 
+  const stopRecording = () => {
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+  };
+
+  const cancelRecording = () => {
+    isCancelledRef.current = true;
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+    setRecordingSeconds(0);
+    toast.info("Voice recording cancelled.");
+  };
+
   const handleSubmit = async () => {
+    if (isRecording) {
+      stopRecording();
+      return;
+    }
+
     const trimmed = content.trim();
     if (!trimmed && !attachment) return;
     if (isSubmitting) return;
@@ -172,6 +304,7 @@ export function MessageInput({
           replyToId: replyingTo ? replyingTo.id : null,
         });
 
+        playSendSound();
         setContent("");
         setAttachment(null);
       }
@@ -179,24 +312,34 @@ export function MessageInput({
       console.error("Failed to submit message:", error);
     } finally {
       setIsSubmitting(false);
-      textareaRef.current?.focus();
     }
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
+    }
+  };
+
+  const formatTimer = (sec: number) => {
+    const mins = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${mins}:${s < 10 ? "0" : ""}${s}`;
+  };
+
   return (
-    <div className="relative border-t border-slate-800/80 bg-slate-900/90 backdrop-blur-md px-4 py-3">
+    <div className="p-3 sm:p-4 bg-slate-900/95 border-t border-slate-800/80 backdrop-blur-md relative select-none">
       {/* Replying Banner */}
       {replyingTo && (
-        <div className="flex items-center justify-between gap-2 mb-2 px-3 py-1.5 rounded-xl bg-indigo-950/60 border border-indigo-700/40 text-xs text-indigo-200">
+        <div className="flex items-center justify-between gap-2 mb-2 px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700/60 text-xs text-slate-300">
           <div className="truncate">
-            <span className="font-semibold text-indigo-300">
-              Replying to {replyingTo.sender?.name || "User"}:
-            </span>{" "}
+            <span className="font-semibold text-indigo-400">Replying to {replyingTo.sender?.name || "User"}:</span>{" "}
             <span className="opacity-80 truncate">{replyingTo.content || "Attachment"}</span>
           </div>
           <button
             onClick={onCancelReply}
-            className="p-1 hover:bg-indigo-900/60 rounded-lg text-indigo-300 transition shrink-0"
+            className="p-1 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition shrink-0"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -248,14 +391,14 @@ export function MessageInput({
           ref={fileInputRef}
           onChange={handleFileUpload}
           className="hidden"
-          accept="image/*,.pdf,.doc,.docx,.txt,.zip"
+          accept="image/*,.pdf,.doc,.docx,.txt,.zip,audio/*"
         />
 
         {/* Attachment Button */}
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          disabled={isUploading}
+          disabled={isUploading || isRecording}
           title="Attach file or image"
           className="p-2.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition shrink-0"
         >
@@ -271,6 +414,7 @@ export function MessageInput({
           <button
             type="button"
             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+            disabled={isRecording}
             title="Add emoji"
             className="p-2.5 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded-xl transition"
           >
@@ -286,32 +430,67 @@ export function MessageInput({
           />
         </div>
 
-        {/* Text Input Area */}
-        <textarea
-          ref={textareaRef}
-          value={content}
-          onChange={handleInputChange}
-          onKeyDown={handleKeyDown}
-          placeholder={editingMessage ? "Edit message..." : "Type a message..."}
-          rows={1}
-          className="flex-1 max-h-32 min-h-[42px] py-2 px-3 sm:py-2.5 sm:px-3.5 bg-slate-800/80 border border-slate-700/80 rounded-xl text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 resize-none transition"
-        />
+        {/* Voice Note Record Button */}
+        {!isRecording && (
+          <button
+            type="button"
+            onClick={startRecording}
+            disabled={isUploading || Boolean(content.trim())}
+            title="Record voice note"
+            className="p-2.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-xl transition shrink-0 hidden sm:inline-flex"
+          >
+            <Mic className="w-5 h-5" />
+          </button>
+        )}
 
-        {/* Send Button */}
+        {/* Text Input Area OR Recording View */}
+        {isRecording ? (
+          <div className="flex-1 flex items-center justify-between gap-3 px-3.5 py-2 bg-rose-950/30 border border-rose-600/30 rounded-xl text-rose-300 animate-in fade-in">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping shrink-0" />
+              <span className="text-xs font-semibold truncate">
+                Recording... {formatTimer(recordingSeconds)}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={cancelRecording}
+              className="text-xs font-semibold px-2 py-1 bg-rose-900/60 hover:bg-rose-900 rounded-lg text-rose-200 transition shrink-0"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <textarea
+            ref={textareaRef}
+            value={content}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            placeholder={editingMessage ? "Edit message..." : "Type a message..."}
+            rows={1}
+            className="flex-1 max-h-32 min-h-[42px] py-2 px-3 sm:py-2.5 sm:px-3.5 bg-slate-800/80 border border-slate-700/80 rounded-xl text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 resize-none transition"
+          />
+        )}
+
+        {/* Send / Stop Recording Button */}
         <button
           type="button"
           onClick={handleSubmit}
-          disabled={isSubmitting || (!content.trim() && !attachment)}
+          disabled={isSubmitting || (!isRecording && !content.trim() && !attachment)}
           className={cn(
             "p-2.5 rounded-xl font-medium transition-all duration-200 shrink-0",
-            content.trim() || attachment
+            isRecording
+              ? "bg-rose-600 text-white hover:bg-rose-500 shadow-md active:scale-95 animate-pulse"
+              : content.trim() || attachment
               ? "bg-indigo-600 text-white hover:bg-indigo-500 shadow-md active:scale-95"
               : "bg-slate-800 text-slate-500 cursor-not-allowed"
           )}
-          title="Send message"
+          title={isRecording ? "Stop & Send Voice Note" : "Send message"}
         >
-          {isSubmitting ? (
+          {isSubmitting || isUploading ? (
             <Loader2 className="w-5 h-5 animate-spin" />
+          ) : isRecording ? (
+            <Square className="w-5 h-5 fill-current" />
           ) : (
             <Send className="w-5 h-5" />
           )}

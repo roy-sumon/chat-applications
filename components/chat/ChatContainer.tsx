@@ -19,6 +19,7 @@ import { ProfileModal } from "./ProfileModal";
 import { useRealtimeContext } from "@/components/providers/RealtimeProvider";
 import { REALTIME_EVENTS, TypingEventPayload, SeenEventPayload } from "@/lib/realtime/types";
 import { useToast } from "@/components/providers/ToastProvider";
+import { playReceiveSound } from "@/lib/utils/sound";
 import { MessageSquare } from "lucide-react";
 
 interface ChatContainerProps {
@@ -45,6 +46,7 @@ export function ChatContainer({
   const [cursor, setCursor] = useState<string | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [activeTypingMap, setActiveTypingMap] = useState<Record<string, string[]>>({});
 
   // Input states
   const [replyingTo, setReplyingTo] = useState<MessageWithDetails | null>(null);
@@ -182,9 +184,10 @@ export function ChatContainer({
         return [updated, ...others];
       });
 
-      // If sent by someone else and active, mark seen
+      // If sent by someone else and active, mark seen and play sound
       if (data.message.senderId !== currentUser.id) {
         markAsSeen(selectedConversationId);
+        playReceiveSound();
       }
     });
 
@@ -240,9 +243,16 @@ export function ChatContainer({
       if (payload.userId === currentUser.id) return;
 
       const userName = payload.userName || "Someone";
+      const convId = payload.conversationId || selectedConversationId;
 
       if (payload.isTyping) {
         setTypingUsers((prev) => (prev.includes(userName) ? prev : [...prev, userName]));
+        if (convId) {
+          setActiveTypingMap((prev) => ({
+            ...prev,
+            [convId]: Array.from(new Set([...(prev[convId] || []), userName])),
+          }));
+        }
 
         // Clear existing timeout for this user
         if (typingTimerMapRef.current.has(payload.userId)) {
@@ -252,6 +262,12 @@ export function ChatContainer({
         // Auto remove typing status after 4 seconds of inactivity
         const timer = setTimeout(() => {
           setTypingUsers((prev) => prev.filter((name) => name !== userName));
+          if (convId) {
+            setActiveTypingMap((prev) => ({
+              ...prev,
+              [convId]: (prev[convId] || []).filter((name) => name !== userName),
+            }));
+          }
           typingTimerMapRef.current.delete(payload.userId);
         }, 4000);
 
@@ -262,6 +278,12 @@ export function ChatContainer({
           typingTimerMapRef.current.delete(payload.userId);
         }
         setTypingUsers((prev) => prev.filter((name) => name !== userName));
+        if (convId) {
+          setActiveTypingMap((prev) => ({
+            ...prev,
+            [convId]: (prev[convId] || []).filter((name) => name !== userName),
+          }));
+        }
       }
     });
 
@@ -295,6 +317,11 @@ export function ChatContainer({
       (data: { conversationId: string; lastMessage?: MessageWithDetails }) => {
         if (!data.conversationId) return;
 
+        // If from another user, play subtle chime
+        if (data.lastMessage && data.lastMessage.senderId !== currentUser.id) {
+          playReceiveSound();
+        }
+
         setConversations((prev) => {
           const index = prev.findIndex((c) => c.id === data.conversationId);
           if (index === -1) {
@@ -315,6 +342,25 @@ export function ChatContainer({
         });
       }
     );
+
+    userChannel.bind(REALTIME_EVENTS.TYPING, (payload: TypingEventPayload) => {
+      if (payload.userId === currentUser.id) return;
+      const convId = payload.conversationId;
+      const userName = payload.userName || "Someone";
+      if (!convId) return;
+
+      if (payload.isTyping) {
+        setActiveTypingMap((prev) => ({
+          ...prev,
+          [convId]: Array.from(new Set([...(prev[convId] || []), userName])),
+        }));
+      } else {
+        setActiveTypingMap((prev) => ({
+          ...prev,
+          [convId]: (prev[convId] || []).filter((name) => name !== userName),
+        }));
+      }
+    });
 
     return () => {
       userChannel.unbind_all();
@@ -511,6 +557,51 @@ export function ChatContainer({
     }
   };
 
+  // Export conversation history as a text file
+  const handleExportChat = () => {
+    if (!activeConversation || messages.length === 0) {
+      toast.info("No messages to export.", "Export");
+      return;
+    }
+
+    const lines = messages.map((m) => {
+      const sender = m.sender?.name || "User";
+      const time = new Date(m.createdAt).toLocaleString();
+      const content =
+        m.content ||
+        (m.attachmentUrl ? `[Attachment: ${m.attachmentName || "File"}]` : "");
+      return `[${time}] ${sender}: ${content}`;
+    });
+
+    const title =
+      activeConversation.type === "GROUP"
+        ? activeConversation.name || "Group Chat"
+        : "Direct Chat";
+
+    const fileContent = `=== Conversation History: ${title} ===\nExported: ${new Date().toLocaleString()}\nTotal Messages: ${messages.length}\n\n${lines.join("\n")}`;
+
+    const blob = new Blob([fileContent], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `chat-history-${activeConversation.id.slice(-6)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Chat history exported.");
+  };
+
+  // Keyboard shortcut Ctrl+K / Cmd+K for in-chat search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setIsSearchingInChat((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   // Select conversation and toggle mobile view
   const handleSelectConversation = (id: string) => {
     setSelectedConversationId(id);
@@ -535,6 +626,7 @@ export function ChatContainer({
           currentUser={currentUser}
           conversations={conversations}
           selectedConversationId={selectedConversationId}
+          activeTypingMap={activeTypingMap}
           onSelectConversation={handleSelectConversation}
           onOpenNewChat={() => setIsNewChatOpen(true)}
           onOpenNewGroup={() => setIsNewGroupOpen(true)}
@@ -562,9 +654,11 @@ export function ChatContainer({
                     )
                   : false
               }
+              typingUsers={typingUsers}
               onBack={() => setMobileView("list")}
               onOpenDetails={() => setIsGroupDetailsOpen(true)}
               onToggleSearch={() => setIsSearchingInChat(!isSearchingInChat)}
+              onExportChat={handleExportChat}
               isSearching={isSearchingInChat}
             />
 

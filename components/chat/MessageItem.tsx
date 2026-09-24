@@ -16,6 +16,7 @@ import {
   FileText,
   Download,
   Smile,
+  Mic,
 } from "lucide-react";
 
 interface MessageItemProps {
@@ -230,31 +231,46 @@ export function MessageItem({
             </div>
           )}
 
-          {/* File Attachment */}
+          {/* Voice Note / Audio or File Attachment */}
           {message.attachmentUrl && message.type === "FILE" && (
-            <div className="flex items-center gap-3 p-2.5 my-1 rounded-xl bg-black/25 border border-white/10">
-              <div className="p-2 rounded-lg bg-indigo-500/20 text-indigo-300">
-                <FileText className="w-5 h-5" />
+            message.attachmentType?.startsWith("audio/") ||
+            message.attachmentName?.toLowerCase().includes("voice") ? (
+              <div className="my-1.5 p-2 rounded-xl bg-black/25 border border-white/10 space-y-1">
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-indigo-300">
+                  <Mic className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>{message.attachmentName || "Voice Message"}</span>
+                </div>
+                <audio
+                  controls
+                  src={message.attachmentUrl}
+                  className="w-full max-w-[240px] sm:max-w-xs h-8 accent-indigo-500 rounded-lg"
+                />
               </div>
-              <div className="flex-1 min-w-0 text-left">
-                <p className="font-medium text-xs truncate">
-                  {message.attachmentName || "Document"}
-                </p>
-                <p className="text-[10px] text-slate-300 opacity-80">
-                  {formatFileSize(message.attachmentSize)}
-                </p>
+            ) : (
+              <div className="flex items-center gap-3 p-2.5 my-1 rounded-xl bg-black/25 border border-white/10">
+                <div className="p-2 rounded-lg bg-indigo-500/20 text-indigo-300">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0 text-left">
+                  <p className="font-medium text-xs truncate">
+                    {message.attachmentName || "Document"}
+                  </p>
+                  <p className="text-[10px] text-slate-300 opacity-80">
+                    {formatFileSize(message.attachmentSize)}
+                  </p>
+                </div>
+                <a
+                  href={message.attachmentUrl}
+                  download={message.attachmentName || "download"}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="p-1.5 hover:bg-white/10 rounded-lg transition text-slate-200"
+                  title="Download"
+                >
+                  <Download className="w-4 h-4" />
+                </a>
               </div>
-              <a
-                href={message.attachmentUrl}
-                download={message.attachmentName || "download"}
-                target="_blank"
-                rel="noreferrer"
-                className="p-1.5 hover:bg-white/10 rounded-lg transition text-slate-200"
-                title="Download"
-              >
-                <Download className="w-4 h-4" />
-              </a>
-            </div>
+            )
           )}
 
           {/* Message Text Content */}

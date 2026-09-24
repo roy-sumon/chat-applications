@@ -6,12 +6,15 @@ import { ConversationWithDetails, UserSummary } from "@/types";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
 import { formatConversationDate, cn } from "@/lib/utils";
+import { isSoundEnabled, setSoundEnabled } from "@/lib/utils/sound";
 import {
   MessageSquarePlus,
   Users,
   Search,
   LogOut,
   Settings,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
 
@@ -19,6 +22,7 @@ interface ConversationSidebarProps {
   currentUser: UserSummary;
   conversations: ConversationWithDetails[];
   selectedConversationId: string | null;
+  activeTypingMap?: Record<string, string[]>;
   onSelectConversation: (conversationId: string) => void;
   onOpenNewChat: () => void;
   onOpenNewGroup: () => void;
@@ -30,6 +34,7 @@ export function ConversationSidebar({
   currentUser,
   conversations,
   selectedConversationId,
+  activeTypingMap = {},
   onSelectConversation,
   onOpenNewChat,
   onOpenNewGroup,
@@ -37,6 +42,13 @@ export function ConversationSidebar({
   isUserOnline,
 }: ConversationSidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [soundOn, setSoundOn] = useState(() => isSoundEnabled());
+
+  const toggleSound = () => {
+    const next = !soundOn;
+    setSoundOn(next);
+    setSoundEnabled(next);
+  };
 
   const filteredConversations = conversations.filter((c) => {
     if (!searchQuery.trim()) return true;
@@ -74,6 +86,17 @@ export function ConversationSidebar({
         </div>
 
         <div className="flex items-center gap-1">
+          <button
+            onClick={toggleSound}
+            title={soundOn ? "Mute notification sounds" : "Unmute notification sounds"}
+            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition"
+          >
+            {soundOn ? (
+              <Volume2 className="w-4 h-4 text-indigo-400" />
+            ) : (
+              <VolumeX className="w-4 h-4 text-slate-500" />
+            )}
+          </button>
           <button
             onClick={onOpenProfile}
             title="Profile settings"
@@ -151,6 +174,9 @@ export function ConversationSidebar({
             const isSelected = selectedConversationId === conv.id;
             const unread = conv.unreadCount || 0;
 
+            const typingList = activeTypingMap[conv.id] || [];
+            const isTyping = typingList.length > 0;
+
             // Last message snippet
             let snippet = "No messages yet";
             if (conv.lastMessage) {
@@ -171,7 +197,7 @@ export function ConversationSidebar({
                 key={conv.id}
                 onClick={() => onSelectConversation(conv.id)}
                 className={cn(
-                  "flex items-center gap-3 p-3 rounded-2xl cursor-pointer transition-all duration-150 group",
+                  "flex items-center gap-3 p-3 rounded-2xl cursor-pointer transition-all duration-150 group active:scale-[0.98]",
                   isSelected
                     ? "bg-indigo-600/15 border border-indigo-500/30 text-white"
                     : "hover:bg-slate-900/80 text-slate-300 border border-transparent"
@@ -203,14 +229,25 @@ export function ConversationSidebar({
                   </div>
 
                   <div className="flex items-center justify-between gap-2">
-                    <p
-                      className={cn(
-                        "text-xs truncate",
-                        unread > 0 ? "font-semibold text-slate-200" : "text-slate-400"
-                      )}
-                    >
-                      {snippet}
-                    </p>
+                    {isTyping ? (
+                      <p className="text-xs text-emerald-400 font-medium truncate flex items-center gap-1 animate-pulse">
+                        <span className="flex gap-0.5 items-center">
+                          <span className="w-1 h-1 rounded-full bg-emerald-400 animate-bounce" />
+                          <span className="w-1 h-1 rounded-full bg-emerald-400 animate-bounce [animation-delay:0.15s]" />
+                          <span className="w-1 h-1 rounded-full bg-emerald-400 animate-bounce [animation-delay:0.3s]" />
+                        </span>
+                        <span>{typingList.join(", ")} typing...</span>
+                      </p>
+                    ) : (
+                      <p
+                        className={cn(
+                          "text-xs truncate",
+                          unread > 0 ? "font-semibold text-slate-200" : "text-slate-400"
+                        )}
+                      >
+                        {snippet}
+                      </p>
+                    )}
 
                     {unread > 0 && (
                       <Badge variant="primary" size="sm" className="bg-indigo-600 text-white border-none shrink-0 font-bold">

@@ -120,13 +120,17 @@ export function MessageList({
 
       {/* Typing Indicator Bubble */}
       {typingUsers.length > 0 && (
-        <div className="flex items-center gap-2 text-xs text-slate-400 italic py-1 px-3">
-          <span className="flex gap-1 items-center">
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" />
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce [animation-delay:0.2s]" />
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce [animation-delay:0.4s]" />
-          </span>
-          <span>{typingUsers.join(", ")} {typingUsers.length > 1 ? "are" : "is"} typing...</span>
+        <div className="flex items-center gap-2.5 my-2 px-2 animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <div className="flex items-center gap-2 px-3.5 py-2 rounded-2xl rounded-bl-xs bg-slate-800/90 border border-slate-700/60 shadow-sm text-xs text-slate-300">
+            <span className="flex gap-1 items-center">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce [animation-delay:0s]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce [animation-delay:0.18s]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce [animation-delay:0.36s]" />
+            </span>
+            <span className="font-medium text-slate-300">
+              {typingUsers.join(", ")} {typingUsers.length > 1 ? "are" : "is"} typing...
+            </span>
+          </div>
         </div>
       )}
 

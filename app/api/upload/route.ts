@@ -13,6 +13,11 @@ const ALLOWED_MIME_TYPES = [
   "image/gif",
   "image/webp",
   "image/svg+xml",
+  "audio/webm",
+  "audio/ogg",
+  "audio/mp3",
+  "audio/mpeg",
+  "audio/wav",
   "application/pdf",
   "text/plain",
   "application/zip",
@@ -42,9 +47,13 @@ export async function POST(req: NextRequest) {
     }
 
     // Validate MIME type
-    if (!ALLOWED_MIME_TYPES.includes(file.type) && !file.type.startsWith("image/")) {
+    if (
+      !ALLOWED_MIME_TYPES.includes(file.type) &&
+      !file.type.startsWith("image/") &&
+      !file.type.startsWith("audio/")
+    ) {
       return NextResponse.json(
-        { error: "File type not supported. Allowed: images, PDF, documents, ZIP." },
+        { error: "File type not supported. Allowed: images, audio, PDF, documents, ZIP." },
         { status: 400 }
       );
     }

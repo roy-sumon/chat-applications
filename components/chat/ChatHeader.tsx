@@ -4,15 +4,17 @@ import React from "react";
 import { ConversationWithDetails, UserSummary } from "@/types";
 import { Avatar } from "@/components/ui/Avatar";
 import { formatLastSeen } from "@/lib/utils";
-import { ArrowLeft, Users, Search, Info } from "lucide-react";
+import { ArrowLeft, Users, Search, Info, Download } from "lucide-react";
 
 interface ChatHeaderProps {
   conversation: ConversationWithDetails;
   currentUserId: string;
   isOnline: boolean;
+  typingUsers?: string[];
   onBack?: () => void;
   onOpenDetails: () => void;
   onToggleSearch: () => void;
+  onExportChat?: () => void;
   isSearching: boolean;
 }
 
@@ -20,9 +22,11 @@ export function ChatHeader({
   conversation,
   currentUserId,
   isOnline,
+  typingUsers = [],
   onBack,
   onOpenDetails,
   onToggleSearch,
+  onExportChat,
   isSearching,
 }: ChatHeaderProps) {
   const isGroup = conversation.type === "GROUP";
@@ -37,14 +41,11 @@ export function ChatHeader({
 
   const displayAvatar = isGroup ? conversation.avatar : otherUser?.avatar;
 
-  const statusText = isGroup
-    ? `${conversation.members.length} members`
-    : isOnline
-    ? "Active now"
-    : formatLastSeen(otherUser?.lastSeen);
+  const isTyping = typingUsers.length > 0;
+  const typingLabel = `${typingUsers.join(", ")} ${typingUsers.length > 1 ? "are" : "is"} typing...`;
 
   return (
-    <div className="h-16 px-4 border-b border-slate-800/80 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3 z-10">
+    <div className="h-16 px-4 border-b border-slate-800/80 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3 z-10 select-none">
       <div className="flex items-center gap-3 min-w-0">
         {/* Mobile Back Button */}
         {onBack && (
@@ -70,25 +71,47 @@ export function ChatHeader({
         </div>
 
         {/* Title and Status */}
-        <div
-          className="min-w-0 cursor-pointer flex-1"
-          onClick={onOpenDetails}
-        >
+        <div className="min-w-0 cursor-pointer flex-1" onClick={onOpenDetails}>
           <h2 className="text-sm font-bold text-white truncate flex items-center gap-1.5">
             {displayName}
             {isGroup && <Users className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
           </h2>
-          <p className="text-xs text-slate-400 truncate flex items-center gap-1">
-            {!isGroup && isOnline && (
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse" />
+          <div className="text-xs text-slate-400 truncate flex items-center gap-1">
+            {isTyping ? (
+              <span className="text-emerald-400 font-medium flex items-center gap-1.5 animate-pulse">
+                <span className="flex gap-0.5 items-center">
+                  <span className="w-1 h-1 rounded-full bg-emerald-400 animate-bounce" />
+                  <span className="w-1 h-1 rounded-full bg-emerald-400 animate-bounce [animation-delay:0.15s]" />
+                  <span className="w-1 h-1 rounded-full bg-emerald-400 animate-bounce [animation-delay:0.3s]" />
+                </span>
+                <span>{typingLabel}</span>
+              </span>
+            ) : isGroup ? (
+              <span>{conversation.members.length} members</span>
+            ) : isOnline ? (
+              <span className="flex items-center gap-1 text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse" />
+                Active now
+              </span>
+            ) : (
+              <span>{formatLastSeen(otherUser?.lastSeen)}</span>
             )}
-            {statusText}
-          </p>
+          </div>
         </div>
       </div>
 
       {/* Action Buttons */}
       <div className="flex items-center gap-1">
+        {onExportChat && (
+          <button
+            onClick={onExportChat}
+            title="Export conversation (.txt)"
+            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition hidden sm:inline-flex"
+          >
+            <Download className="w-4 h-4" />
+          </button>
+        )}
+
         <button
           onClick={onToggleSearch}
           title="Search in conversation"
