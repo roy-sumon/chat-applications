@@ -314,10 +314,12 @@ export function ChatContainer({
         return [updated, ...others];
       });
 
-      // If sent by someone else and active, mark seen and play sound
+      // If sent by someone else and active, mark seen and play sound (skip for call system logs)
       if (data.message.senderId !== currentUser.id) {
         markAsSeen(selectedConversationId);
-        playReceiveSound();
+        if (!data.message.content?.startsWith("CALL:")) {
+          playReceiveSound();
+        }
       }
     });
 
@@ -445,10 +447,13 @@ export function ChatContainer({
     userChannel.bind(
       REALTIME_EVENTS.CONVERSATION_UPDATED,
       (data: { conversationId: string; lastMessage?: MessageWithDetails }) => {
-        if (!data.conversationId) return;
-
-        // If from another user, play subtle chime
-        if (data.lastMessage && data.lastMessage.senderId !== currentUser.id) {
+        // If from another user and NOT in the currently active conversation, play subtle chime (skip call logs)
+        if (
+          data.lastMessage &&
+          data.lastMessage.senderId !== currentUser.id &&
+          data.conversationId !== selectedConversationId &&
+          !data.lastMessage.content?.startsWith("CALL:")
+        ) {
           playReceiveSound();
         }
 
