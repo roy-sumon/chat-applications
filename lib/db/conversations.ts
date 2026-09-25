@@ -233,3 +233,64 @@ export async function createGroupConversation(
 
   return conversation;
 }
+
+export async function deleteConversation(conversationId: string, userId: string) {
+  // 1. Verify user is member of conversation
+  const member = await prisma.conversationMember.findUnique({
+    where: {
+      conversationId_userId: {
+        conversationId,
+        userId,
+      },
+    },
+  });
+
+  if (!member) {
+    throw new Error("Conversation not found or access denied");
+  }
+
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    include: { members: true },
+  });
+
+  if (!conversation) {
+    throw new Error("Conversation not found");
+  }
+
+  // If GROUP conversation, only ADMIN can delete the entire conversation.
+  if (conversation.type === ConversationType.GROUP && member.role !== MemberRole.ADMIN) {
+    throw new Error("Only group administrators can delete this group");
+  }
+
+  const memberIds = conversation.members.map((m) => m.userId);
+
+  // Clean up messages, reactions, read receipts, members, and conversation
+  const messages = await prisma.message.findMany({
+    where: { conversationId },
+    select: { id: true },
+  });
+  const messageIds = messages.map((m) => m.id);
+
+  if (messageIds.length > 0) {
+    await prisma.messageReaction.deleteMany({
+      where: { messageId: { in: messageIds } },
+    });
+    await prisma.readReceipt.deleteMany({
+      where: { messageId: { in: messageIds } },
+    });
+    await prisma.message.deleteMany({
+      where: { conversationId },
+    });
+  }
+
+  await prisma.conversationMember.deleteMany({
+    where: { conversationId },
+  });
+
+  await prisma.conversation.delete({
+    where: { id: conversationId },
+  });
+
+  return { conversationId, memberIds };
+}

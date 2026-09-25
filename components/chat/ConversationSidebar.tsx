@@ -16,6 +16,7 @@ import {
   Volume2,
   VolumeX,
   X,
+  Trash2,
 } from "lucide-react";
 
 interface ConversationSidebarProps {
@@ -27,6 +28,7 @@ interface ConversationSidebarProps {
   onOpenNewChat: () => void;
   onOpenNewGroup: () => void;
   onOpenProfile: () => void;
+  onDeleteConversation?: (conversationId: string) => void;
   isUserOnline: (userId: string) => boolean;
 }
 
@@ -39,6 +41,7 @@ export function ConversationSidebar({
   onOpenNewChat,
   onOpenNewGroup,
   onOpenProfile,
+  onDeleteConversation,
   isUserOnline,
 }: ConversationSidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -273,11 +276,26 @@ export function ConversationSidebar({
                       </p>
                     )}
 
-                    {unread > 0 && (
-                      <Badge variant="primary" size="sm" className="bg-indigo-600 text-white border-none shrink-0 font-bold">
-                        {unread > 99 ? "99+" : unread}
-                      </Badge>
-                    )}
+                    <div className="flex items-center gap-1 shrink-0">
+                      {unread > 0 && (
+                        <Badge variant="primary" size="sm" className="bg-indigo-600 text-white border-none shrink-0 font-bold">
+                          {unread > 99 ? "99+" : unread}
+                        </Badge>
+                      )}
+                      {onDeleteConversation && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteConversation(conv.id);
+                          }}
+                          title="Delete Conversation"
+                          className="opacity-0 group-hover:opacity-100 p-1 rounded-md text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

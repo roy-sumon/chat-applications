@@ -4,7 +4,7 @@ import React from "react";
 import { ConversationWithDetails, UserSummary } from "@/types";
 import { Avatar } from "@/components/ui/Avatar";
 import { formatLastSeen } from "@/lib/utils";
-import { ArrowLeft, Users, Search, Info, Download, Phone, Video } from "lucide-react";
+import { ArrowLeft, Users, Search, Info, Download, Phone, Video, Trash2 } from "lucide-react";
 
 interface ChatHeaderProps {
   conversation: ConversationWithDetails;
@@ -16,6 +16,7 @@ interface ChatHeaderProps {
   onToggleSearch: () => void;
   onExportChat?: () => void;
   onStartCall?: (type: "AUDIO" | "VIDEO") => void;
+  onDeleteConversation?: () => void;
   isSearching: boolean;
 }
 
@@ -29,6 +30,7 @@ export function ChatHeader({
   onToggleSearch,
   onExportChat,
   onStartCall,
+  onDeleteConversation,
   isSearching,
 }: ChatHeaderProps) {
   const isGroup = conversation.type === "GROUP";
@@ -152,6 +154,16 @@ export function ChatHeader({
         >
           <Info className="w-4 h-4" />
         </button>
+
+        {onDeleteConversation && (
+          <button
+            onClick={onDeleteConversation}
+            title={isGroup ? "Delete Group" : "Delete Conversation"}
+            className="p-2 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        )}
       </div>
     </div>
   );

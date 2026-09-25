@@ -223,7 +223,11 @@ export function CallModal({
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
         video: callType === "VIDEO",
       });
       setLocalStream(stream);
@@ -234,10 +238,23 @@ export function CallModal({
       // Add local tracks to peer connection
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-      // Handle remote track
+      const audioTransceiver = pc.getTransceivers().find((t) => t.sender.track?.kind === "audio");
+      if (audioTransceiver) {
+        audioTransceiver.direction = "sendrecv";
+      }
+
+      // Handle remote track with stream fallback
       pc.ontrack = (event) => {
-        if (event.streams && event.streams[0]) {
-          setRemoteStream(event.streams[0]);
+        let incomingStream = event.streams && event.streams[0];
+        if (!incomingStream) {
+          incomingStream = new MediaStream([event.track]);
+        }
+        setRemoteStream(incomingStream);
+        if (remoteAudioRef.current) {
+          remoteAudioRef.current.srcObject = incomingStream;
+          remoteAudioRef.current.play().catch((err) => {
+            console.warn("Direct ontrack audio play error:", err);
+          });
         }
       };
 
@@ -291,7 +308,11 @@ export function CallModal({
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
         video: callType === "VIDEO",
       });
       setLocalStream(stream);
@@ -301,9 +322,22 @@ export function CallModal({
 
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
+      const audioTransceiver = pc.getTransceivers().find((t) => t.sender.track?.kind === "audio");
+      if (audioTransceiver) {
+        audioTransceiver.direction = "sendrecv";
+      }
+
       pc.ontrack = (event) => {
-        if (event.streams && event.streams[0]) {
-          setRemoteStream(event.streams[0]);
+        let incomingStream = event.streams && event.streams[0];
+        if (!incomingStream) {
+          incomingStream = new MediaStream([event.track]);
+        }
+        setRemoteStream(incomingStream);
+        if (remoteAudioRef.current) {
+          remoteAudioRef.current.srcObject = incomingStream;
+          remoteAudioRef.current.play().catch((err) => {
+            console.warn("Direct ontrack audio play error:", err);
+          });
         }
       };
 
@@ -503,126 +537,123 @@ export function CallModal({
     return `${mins}:${s < 10 ? "0" : ""}${s}`;
   };
 
-  // View A: Incoming Call Alert Dialog
-  if (callStatus === "incoming") {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in select-none">
-        <div className="relative w-full max-w-sm p-6 bg-slate-900 border border-slate-700/80 rounded-3xl shadow-2xl text-center space-y-6 animate-in zoom-in-95">
-          <div className="relative inline-block mx-auto mt-2">
-            <span className="absolute -inset-2.5 rounded-full bg-indigo-500/30 animate-ping" />
-            <Avatar
-              src={otherUser.avatar}
-              name={otherUser.name}
-              size="lg"
-              className="relative z-10 border-2 border-indigo-500 shadow-xl"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <h3 className="text-xl font-bold text-white tracking-tight">{otherUser.name}</h3>
-            <p className="text-xs text-indigo-400 font-semibold flex items-center justify-center gap-1.5 animate-pulse">
-              {callType === "VIDEO" ? (
-                <>
-                  <Video className="w-4 h-4" />
-                  <span>Incoming Video Call...</span>
-                </>
-              ) : (
-                <>
-                  <Phone className="w-4 h-4" />
-                  <span>Incoming Voice Call...</span>
-                </>
-              )}
-            </p>
-          </div>
-
-          <div className="flex items-center justify-center gap-6 pt-2">
-            <button
-              onClick={() => {
-                stopAllRingtones();
-                if (ringtoneStopRef.current) {
-                  ringtoneStopRef.current();
-                  ringtoneStopRef.current = null;
-                }
-                onRejectIncoming();
-              }}
-              className="w-14 h-14 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center shadow-lg transition active:scale-95"
-              title="Decline"
-            >
-              <PhoneOff className="w-6 h-6" />
-            </button>
-            <button
-              onClick={handleAcceptCall}
-              className="w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center shadow-lg transition active:scale-95 animate-bounce"
-              title="Accept"
-            >
-              <Phone className="w-6 h-6" />
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // View B: Active Call Window (Calling or Connected)
   return (
-    <div
-      className={`fixed z-50 flex flex-col bg-slate-950/95 border border-slate-800 backdrop-blur-2xl shadow-2xl transition-all duration-300 select-none ${
-        isFullScreen
-          ? "inset-0 rounded-none"
-          : "inset-2 sm:inset-6 md:inset-12 rounded-3xl overflow-hidden"
-      }`}
-    >
-      {/* Top Header */}
-      <div className="h-14 px-4 sm:px-6 bg-slate-900/60 border-b border-slate-800/80 flex items-center justify-between z-20">
-        <div className="flex items-center gap-3">
-          <Avatar src={otherUser.avatar} name={otherUser.name} size="sm" />
-          <div>
-            <h4 className="text-sm font-bold text-white leading-tight">{otherUser.name}</h4>
-            <p className="text-[11px] text-slate-400">
-              {callStatus === "calling" ? (
-                isOtherUserOnline ? (
-                  <span className="text-emerald-400 animate-pulse font-medium">Ringing...</span>
+    <>
+      {/* Audio element for remote audio playback mounted unconditionally so ref is never null on accept/ring */}
+      <audio
+        ref={remoteAudioRef}
+        autoPlay
+        playsInline
+        style={{
+          position: "fixed",
+          top: -9999,
+          left: -9999,
+          width: "1px",
+          height: "1px",
+          opacity: 0.001,
+          pointerEvents: "none",
+        }}
+      />
+
+      {callStatus === "incoming" ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in select-none">
+          <div className="relative w-full max-w-sm p-6 bg-slate-900 border border-slate-700/80 rounded-3xl shadow-2xl text-center space-y-6 animate-in zoom-in-95">
+            <div className="relative inline-block mx-auto mt-2">
+              <span className="absolute -inset-2.5 rounded-full bg-indigo-500/30 animate-ping" />
+              <Avatar
+                src={otherUser.avatar}
+                name={otherUser.name}
+                size="lg"
+                className="relative z-10 border-2 border-indigo-500 shadow-xl"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-xl font-bold text-white tracking-tight">{otherUser.name}</h3>
+              <p className="text-xs text-indigo-400 font-semibold flex items-center justify-center gap-1.5 animate-pulse">
+                {callType === "VIDEO" ? (
+                  <>
+                    <Video className="w-4 h-4" />
+                    <span>Incoming Video Call...</span>
+                  </>
                 ) : (
-                  <span className="text-amber-400 animate-pulse font-medium">Calling (Offline)...</span>
-                )
-              ) : (
-                <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse" />
-                  Connected · {formatTimer(durationSeconds)}
-                </span>
-              )}
-            </p>
+                  <>
+                    <Phone className="w-4 h-4" />
+                    <span>Incoming Voice Call...</span>
+                  </>
+                )}
+              </p>
+            </div>
+
+            <div className="flex items-center justify-center gap-6 pt-2">
+              <button
+                onClick={() => {
+                  stopAllRingtones();
+                  if (ringtoneStopRef.current) {
+                    ringtoneStopRef.current();
+                    ringtoneStopRef.current = null;
+                  }
+                  onRejectIncoming();
+                }}
+                className="w-14 h-14 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center shadow-lg transition active:scale-95"
+                title="Decline"
+              >
+                <PhoneOff className="w-6 h-6" />
+              </button>
+              <button
+                onClick={handleAcceptCall}
+                className="w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center shadow-lg transition active:scale-95 animate-bounce"
+                title="Accept"
+              >
+                <Phone className="w-6 h-6" />
+              </button>
+            </div>
           </div>
         </div>
+      ) : (
+        <div
+          className={`fixed z-50 flex flex-col bg-slate-950/95 border border-slate-800 backdrop-blur-2xl shadow-2xl transition-all duration-300 select-none ${
+            isFullScreen
+              ? "inset-0 rounded-none"
+              : "inset-2 sm:inset-6 md:inset-12 rounded-3xl overflow-hidden"
+          }`}
+        >
+          {/* Top Header */}
+          <div className="h-14 px-4 sm:px-6 bg-slate-900/60 border-b border-slate-800/80 flex items-center justify-between z-20">
+            <div className="flex items-center gap-3">
+              <Avatar src={otherUser.avatar} name={otherUser.name} size="sm" />
+              <div>
+                <h4 className="text-sm font-bold text-white leading-tight">{otherUser.name}</h4>
+                <p className="text-[11px] text-slate-400">
+                  {callStatus === "calling" ? (
+                    isOtherUserOnline ? (
+                      <span className="text-emerald-400 animate-pulse font-medium">Ringing...</span>
+                    ) : (
+                      <span className="text-amber-400 animate-pulse font-medium">Calling (Offline)...</span>
+                    )
+                  ) : (
+                    <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse" />
+                      Connected · {formatTimer(durationSeconds)}
+                    </span>
+                  )}
+                </p>
+              </div>
+            </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setIsFullScreen(!isFullScreen)}
-            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition"
-            title={isFullScreen ? "Exit Fullscreen" : "Fullscreen"}
-          >
-            {isFullScreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-          </button>
-        </div>
-      </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsFullScreen(!isFullScreen)}
+                className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition"
+                title={isFullScreen ? "Exit Fullscreen" : "Fullscreen"}
+              >
+                {isFullScreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
 
-      {/* Main Video / Audio Body */}
-      <div className="flex-1 relative flex items-center justify-center bg-slate-950 overflow-hidden">
-        {/* Audio element for remote audio playback in all call types (off-screen, not display:none) */}
-        <audio
-          ref={remoteAudioRef}
-          autoPlay
-          playsInline
-          style={{
-            position: "fixed",
-            top: -9999,
-            left: -9999,
-            width: "1px",
-            height: "1px",
-            opacity: 0.001,
-            pointerEvents: "none",
-          }}
-        />
+          {/* Main Video / Audio Body */}
+          <div className="flex-1 relative flex items-center justify-center bg-slate-950 overflow-hidden">
 
         {callType === "VIDEO" && remoteStream ? (
           <video
@@ -759,5 +790,7 @@ export function CallModal({
         </button>
       </div>
     </div>
+      )}
+    </>
   );
 }

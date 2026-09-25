@@ -29,7 +29,9 @@ import {
 } from "@/lib/realtime/types";
 import { useToast } from "@/components/providers/ToastProvider";
 import { playReceiveSound, stopAllRingtones } from "@/lib/utils/sound";
-import { MessageSquare } from "lucide-react";
+import { MessageSquare, Trash2, AlertTriangle, Loader2 } from "lucide-react";
+import { Modal } from "@/components/ui/Modal";
+import { Button } from "@/components/ui/Button";
 
 interface ChatContainerProps {
   initialUser: UserSummary;
@@ -67,6 +69,8 @@ export function ChatContainer({
   const [isNewGroupOpen, setIsNewGroupOpen] = useState(false);
   const [isGroupDetailsOpen, setIsGroupDetailsOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [conversationToDelete, setConversationToDelete] = useState<ConversationWithDetails | null>(null);
+  const [isDeletingConversation, setIsDeletingConversation] = useState(false);
 
   // WebRTC Call State
   const [callStatus, setCallStatus] = useState<CallStatus>("idle");
@@ -430,6 +434,19 @@ export function ChatContainer({
       refreshConversations();
     });
 
+    // Event: conversation-deleted
+    channel.bind(
+      REALTIME_EVENTS.CONVERSATION_DELETED,
+      (data: { conversationId: string }) => {
+        setConversations((prev) => prev.filter((c) => c.id !== data.conversationId));
+        if (selectedConversationIdRef.current === data.conversationId) {
+          setSelectedConversationId(null);
+          setMessages([]);
+          setMobileView("list");
+        }
+      }
+    );
+
     // WebRTC signaling over conversation channel (redundant delivery path)
     channel.bind(REALTIME_EVENTS.CALL_ANSWER, (data: CallAnswerPayload) => {
       if (data.calleeId !== currentUser.id) {
@@ -486,6 +503,18 @@ export function ChatContainer({
     userChannel.bind(REALTIME_EVENTS.CONVERSATION_CREATED, () => {
       refreshConversations();
     });
+
+    userChannel.bind(
+      REALTIME_EVENTS.CONVERSATION_DELETED,
+      (data: { conversationId: string }) => {
+        setConversations((prev) => prev.filter((c) => c.id !== data.conversationId));
+        if (selectedConversationIdRef.current === data.conversationId) {
+          setSelectedConversationId(null);
+          setMessages([]);
+          setMobileView("list");
+        }
+      }
+    );
 
     userChannel.bind(
       REALTIME_EVENTS.CONVERSATION_UPDATED,
@@ -849,6 +878,34 @@ export function ChatContainer({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  const confirmDeleteConversation = async () => {
+    if (!conversationToDelete) return;
+    setIsDeletingConversation(true);
+    try {
+      const res = await fetch(`/api/conversations/${conversationToDelete.id}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to delete conversation");
+      }
+
+      setConversations((prev) => prev.filter((c) => c.id !== conversationToDelete.id));
+      if (selectedConversationId === conversationToDelete.id) {
+        setSelectedConversationId(null);
+        setMessages([]);
+        setMobileView("list");
+      }
+      toast.success("Conversation deleted successfully.");
+      setConversationToDelete(null);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to delete conversation";
+      toast.error(msg, "Error");
+    } finally {
+      setIsDeletingConversation(false);
+    }
+  };
+
   // Select conversation and toggle mobile view
   const handleSelectConversation = (id: string) => {
     setSelectedConversationId(id);
@@ -878,6 +935,10 @@ export function ChatContainer({
           onOpenNewChat={() => setIsNewChatOpen(true)}
           onOpenNewGroup={() => setIsNewGroupOpen(true)}
           onOpenProfile={() => setIsProfileOpen(true)}
+          onDeleteConversation={(convId) => {
+            const target = conversations.find((c) => c.id === convId);
+            if (target) setConversationToDelete(target);
+          }}
           isUserOnline={isUserOnline}
         />
       </div>
@@ -907,6 +968,7 @@ export function ChatContainer({
               onToggleSearch={() => setIsSearchingInChat(!isSearchingInChat)}
               onExportChat={handleExportChat}
               onStartCall={handleStartCall}
+              onDeleteConversation={() => setConversationToDelete(activeConversation)}
               isSearching={isSearchingInChat}
             />
 
@@ -990,8 +1052,72 @@ export function ChatContainer({
             setSelectedConversationId(null);
             setMobileView("list");
           }}
+          onDeleteConversation={() => setConversationToDelete(activeConversation)}
         />
       )}
+
+      {/* Delete Conversation Confirmation Modal */}
+      <Modal
+        isOpen={Boolean(conversationToDelete)}
+        onClose={() => {
+          if (!isDeletingConversation) setConversationToDelete(null);
+        }}
+        title={`Delete ${conversationToDelete?.type === "GROUP" ? "Group" : "Conversation"}`}
+        maxWidth="sm"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-300">
+            <AlertTriangle className="w-5 h-5 shrink-0 text-rose-400 mt-0.5" />
+            <div className="text-xs space-y-1">
+              <p className="font-semibold text-rose-200">
+                Are you sure you want to delete{" "}
+                <span className="font-bold text-white">
+                  &ldquo;
+                  {conversationToDelete?.type === "GROUP"
+                    ? conversationToDelete.name || "Group Chat"
+                    : conversationToDelete?.members.find((m) => m.userId !== currentUser.id)?.user?.name || "Direct Chat"}
+                  &rdquo;
+                </span>
+                ?
+              </p>
+              <p className="text-rose-300/80">
+                This will permanently delete the conversation, all messages, call logs, and attachments for all participants. This action cannot be undone.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2.5 pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={isDeletingConversation}
+              onClick={() => setConversationToDelete(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              disabled={isDeletingConversation}
+              onClick={confirmDeleteConversation}
+            >
+              {isDeletingConversation ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                  <span>Deleting...</span>
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                  <span>Delete</span>
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <ProfileModal
         isOpen={isProfileOpen}

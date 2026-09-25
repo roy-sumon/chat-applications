@@ -7,6 +7,7 @@ export const REALTIME_EVENTS = {
   TYPING: "typing",
   CONVERSATION_CREATED: "conversation-created",
   CONVERSATION_UPDATED: "conversation-updated",
+  CONVERSATION_DELETED: "conversation-deleted",
   MEMBER_UPDATED: "member-updated",
   // WebRTC Call Signaling Events
   CALL_OFFER: "call-offer",

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
-import { getConversationById } from "@/lib/db/conversations";
+import { getConversationById, deleteConversation } from "@/lib/db/conversations";
 import prisma from "@/lib/db/prisma";
 import { updateGroupSchema } from "@/lib/validation";
 import { MemberRole } from "@prisma/client";
@@ -106,5 +106,50 @@ export async function PATCH(
   } catch (error) {
     console.error("[Conversation API] PATCH error:", error);
     return NextResponse.json({ error: "Failed to update conversation" }, { status: 500 });
+  }
+}
+
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ conversationId: string }> }
+) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { conversationId } = await params;
+    const result = await deleteConversation(conversationId, user.id);
+
+    // Broadcast deletion to all conversation members' private channels
+    await Promise.allSettled(
+      result.memberIds.map((mId) =>
+        realtimeServer.trigger(
+          `private-user-${mId}`,
+          REALTIME_EVENTS.CONVERSATION_DELETED,
+          { conversationId }
+        )
+      )
+    );
+
+    return NextResponse.json({
+      success: true,
+      message: "Conversation deleted successfully",
+      conversationId,
+    });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error("[Conversation API] DELETE error:", err);
+    const status =
+      err.message?.includes("Forbidden") || err.message?.includes("administrators")
+        ? 403
+        : err.message?.includes("not found")
+        ? 404
+        : 500;
+    return NextResponse.json(
+      { error: err.message || "Failed to delete conversation" },
+      { status }
+    );
   }
 }

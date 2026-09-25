@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { ConversationWithDetails, UserSummary } from "@/types";
-import { UserPlus, UserMinus, LogOut, Loader2, Save } from "lucide-react";
+import { UserPlus, UserMinus, LogOut, Loader2, Save, Trash2 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 
 interface GroupDetailsModalProps {
@@ -18,6 +18,7 @@ interface GroupDetailsModalProps {
   isUserOnline: (userId: string) => boolean;
   onGroupUpdated: () => void;
   onLeaveGroup: () => void;
+  onDeleteConversation?: () => void;
 }
 
 export function GroupDetailsModal({
@@ -28,6 +29,7 @@ export function GroupDetailsModal({
   isUserOnline,
   onGroupUpdated,
   onLeaveGroup,
+  onDeleteConversation,
 }: GroupDetailsModalProps) {
   const isGroup = conversation.type === "GROUP";
   const currentUserMember = conversation.members.find((m) => m.userId === currentUserId);
@@ -317,12 +319,29 @@ export function GroupDetailsModal({
           </div>
         </div>
 
-        {/* Leave Group Action */}
-        {isGroup && (
-          <div className="pt-3 border-t border-slate-800 flex justify-end">
+        {/* Actions Footer */}
+        <div className="pt-3 border-t border-slate-800 flex items-center justify-between gap-3">
+          {onDeleteConversation && (!isGroup || isAdmin) ? (
             <Button
               type="button"
               variant="destructive"
+              size="sm"
+              onClick={() => {
+                onClose();
+                onDeleteConversation();
+              }}
+            >
+              <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+              <span>{isGroup ? "Delete Group" : "Delete Chat"}</span>
+            </Button>
+          ) : (
+            <div />
+          )}
+
+          {isGroup && (
+            <Button
+              type="button"
+              variant="secondary"
               size="sm"
               onClick={() => handleRemoveMember(currentUserId)}
               disabled={actionLoadingId === currentUserId}
@@ -330,8 +349,8 @@ export function GroupDetailsModal({
               <LogOut className="w-3.5 h-3.5 mr-1.5" />
               <span>Leave Group</span>
             </Button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </Modal>
   );
