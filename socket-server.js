@@ -69,6 +69,43 @@ io.on("connection", (socket) => {
     }
   });
 
+  // 4. Real-time Chat Events
+  socket.on("chat:message", (payload) => {
+    if (payload && payload.conversationId) {
+      socket.to(`conv:${payload.conversationId}`).emit("chat:message", payload);
+    }
+  });
+
+  socket.on("chat:typing", (payload) => {
+    if (payload && payload.conversationId) {
+      socket.to(`conv:${payload.conversationId}`).emit("chat:typing", payload);
+    }
+  });
+
+  socket.on("chat:reaction", (payload) => {
+    if (payload && payload.conversationId) {
+      socket.to(`conv:${payload.conversationId}`).emit("chat:reaction", payload);
+    }
+  });
+
+  socket.on("chat:seen", (payload) => {
+    if (payload && payload.conversationId) {
+      socket.to(`conv:${payload.conversationId}`).emit("chat:seen", payload);
+    }
+  });
+
+  socket.on("chat:deleted", (payload) => {
+    if (payload && payload.conversationId) {
+      socket.to(`conv:${payload.conversationId}`).emit("chat:deleted", payload);
+    }
+  });
+
+  socket.on("chat:updated", (payload) => {
+    if (payload && payload.conversationId) {
+      socket.to(`conv:${payload.conversationId}`).emit("chat:updated", payload);
+    }
+  });
+
   socket.on("disconnect", () => {
     // Clean up
   });

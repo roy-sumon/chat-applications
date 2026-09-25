@@ -110,6 +110,34 @@ export function ChatContainer({
     (c) => c.id === selectedConversationId
   );
 
+  // Mark messages as seen in a conversation
+  const markAsSeen = useCallback(
+    async (convId: string) => {
+      try {
+        await fetch(`/api/conversations/${convId}/seen`, { method: "POST" });
+        setConversations((prev) =>
+          prev.map((c) => (c.id === convId ? { ...c, unreadCount: 0 } : c))
+        );
+      } catch {
+        // ignore seen errors
+      }
+    },
+    []
+  );
+
+  // Refresh conversations list from API
+  const refreshConversations = useCallback(async () => {
+    try {
+      const res = await fetch("/api/conversations");
+      const data = await res.json();
+      if (res.ok) {
+        setConversations(data.conversations || []);
+      }
+    } catch (err) {
+      console.error("Failed to refresh conversations:", err);
+    }
+  }, []);
+
   // WebRTC Call Signaling sender (Dual: Socket.io instant WebSocket + MongoDB HTTP fallback)
   const handleSendCallSignal = useCallback(
     async (payload: {
@@ -150,13 +178,22 @@ export function ChatContainer({
     [callConversationId, selectedConversationId, currentUser.id]
   );
 
-  // Register user on Socket.io if configured
+  // Join active conversation room on Socket.io for immediate chat broadcasts
+  useEffect(() => {
+    const socket = getSocketClient();
+    if (!socket || !selectedConversationId) return;
+
+    socket.emit("join-conversation", selectedConversationId);
+  }, [selectedConversationId]);
+
+  // Register user and set up Socket.io calling & chat listeners
   useEffect(() => {
     const socket = getSocketClient();
     if (!socket || !currentUser.id) return;
 
     socket.emit("register-user", currentUser.id);
 
+    // 1. WebRTC Call Signaling over Socket.io
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handleIncomingSocketSignal = (data: any) => {
       if (!data) return;
@@ -203,12 +240,144 @@ export function ChatContainer({
       }
     };
 
+    // 2. Real-time chat messages via Socket.io
+    const handleSocketChatMessage = (payload: {
+      conversationId: string;
+      message: MessageWithDetails;
+    }) => {
+      if (!payload || !payload.message) return;
+      const { conversationId, message } = payload;
+
+      if (conversationId === selectedConversationIdRef.current) {
+        setMessages((prev) => {
+          const exists = prev.some((m) => m.id === message.id);
+          if (exists) return prev;
+          const filtered = prev.filter((m) => !m.isOptimistic);
+          return [...filtered, message];
+        });
+
+        if (message.senderId !== currentUser.id) {
+          markAsSeen(conversationId);
+          if (!message.content?.startsWith("CALL:")) {
+            playReceiveSound();
+          }
+        }
+      }
+
+      setConversations((prev) => {
+        const index = prev.findIndex((c) => c.id === conversationId);
+        if (index === -1) {
+          refreshConversations();
+          return prev;
+        }
+        const target = prev[index];
+        const isCurrentActive = target.id === selectedConversationIdRef.current;
+        const updatedConv: ConversationWithDetails = {
+          ...target,
+          lastMessage: message,
+          updatedAt: new Date(),
+          unreadCount: isCurrentActive ? 0 : (target.unreadCount || 0) + 1,
+        };
+        const remaining = prev.filter((c) => c.id !== conversationId);
+        return [updatedConv, ...remaining];
+      });
+    };
+
+    // 3. Real-time typing indicators via Socket.io
+    const handleSocketChatTyping = (payload: {
+      conversationId: string;
+      userId: string;
+      userName: string;
+      isTyping: boolean;
+    }) => {
+      if (!payload || payload.userId === currentUser.id) return;
+      const { conversationId, userName, isTyping, userId } = payload;
+
+      if (conversationId === selectedConversationIdRef.current) {
+        if (isTyping) {
+          setTypingUsers((prev) => (prev.includes(userName) ? prev : [...prev, userName]));
+        } else {
+          setTypingUsers((prev) => prev.filter((n) => n !== userName));
+        }
+      }
+
+      if (isTyping) {
+        setActiveTypingMap((prev) => ({
+          ...prev,
+          [conversationId]: Array.from(new Set([...(prev[conversationId] || []), userName])),
+        }));
+
+        if (typingTimerMapRef.current.has(userId)) {
+          clearTimeout(typingTimerMapRef.current.get(userId)!);
+        }
+
+        const timer = setTimeout(() => {
+          setTypingUsers((prev) => prev.filter((n) => n !== userName));
+          setActiveTypingMap((prev) => ({
+            ...prev,
+            [conversationId]: (prev[conversationId] || []).filter((n) => n !== userName),
+          }));
+          typingTimerMapRef.current.delete(userId);
+        }, 3500);
+        typingTimerMapRef.current.set(userId, timer);
+      } else {
+        setActiveTypingMap((prev) => ({
+          ...prev,
+          [conversationId]: (prev[conversationId] || []).filter((n) => n !== userName),
+        }));
+      }
+    };
+
+    // 4. Real-time message reactions via Socket.io
+    const handleSocketChatReaction = (payload: {
+      conversationId: string;
+      messageId: string;
+      reactions: ReactionDetail[];
+    }) => {
+      if (!payload || payload.conversationId !== selectedConversationIdRef.current) return;
+      setMessages((prev) =>
+        prev.map((m) => (m.id === payload.messageId ? { ...m, reactions: payload.reactions } : m))
+      );
+    };
+
+    // 5. Real-time message delete via Socket.io
+    const handleSocketChatDeleted = (payload: {
+      conversationId: string;
+      messageId: string;
+    }) => {
+      if (!payload || payload.conversationId !== selectedConversationIdRef.current) return;
+      setMessages((prev) => prev.filter((m) => m.id !== payload.messageId));
+    };
+
+    // 6. Real-time message update via Socket.io
+    const handleSocketChatUpdated = (payload: {
+      conversationId: string;
+      message: MessageWithDetails;
+    }) => {
+      if (!payload || !payload.message) return;
+      if (payload.conversationId === selectedConversationIdRef.current) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === payload.message.id ? payload.message : m))
+        );
+      }
+    };
+
     socket.on("call-signal", handleIncomingSocketSignal);
+    socket.on("chat:message", handleSocketChatMessage);
+    socket.on("chat:typing", handleSocketChatTyping);
+    socket.on("chat:reaction", handleSocketChatReaction);
+    socket.on("chat:deleted", handleSocketChatDeleted);
+    socket.on("chat:updated", handleSocketChatUpdated);
 
     return () => {
       socket.off("call-signal", handleIncomingSocketSignal);
+      socket.off("chat:message", handleSocketChatMessage);
+      socket.off("chat:typing", handleSocketChatTyping);
+      socket.off("chat:reaction", handleSocketChatReaction);
+      socket.off("chat:deleted", handleSocketChatDeleted);
+      socket.off("chat:updated", handleSocketChatUpdated);
     };
-  }, [currentUser.id, toast]);
+  }, [currentUser.id, markAsSeen, refreshConversations, toast]);
 
   const handleStartCall = useCallback(
     (type: "AUDIO" | "VIDEO") => {
@@ -285,22 +454,6 @@ export function ChatContainer({
     [callingTarget, callConversationId, selectedConversationId, activeCallType, handleSendCallSignal]
   );
 
-  // 1. Mark messages as seen
-  const markAsSeen = useCallback(
-    async (convId: string) => {
-      try {
-        await fetch(`/api/conversations/${convId}/seen`, { method: "POST" });
-        // Update local conversation unread count
-        setConversations((prev) =>
-          prev.map((c) => (c.id === convId ? { ...c, unreadCount: 0 } : c))
-        );
-      } catch {
-        // ignore seen errors
-      }
-    },
-    []
-  );
-
   // 2. Fetch messages when active conversation changes
   const fetchMessages = useCallback(
     async (convId: string) => {
@@ -355,19 +508,6 @@ export function ChatContainer({
       setIsLoadingMore(false);
     }
   };
-
-  // 3.5 Refresh conversations list from API
-  const refreshConversations = useCallback(async () => {
-    try {
-      const res = await fetch("/api/conversations");
-      const data = await res.json();
-      if (res.ok) {
-        setConversations(data.conversations || []);
-      }
-    } catch (err) {
-      console.error("Failed to refresh conversations:", err);
-    }
-  }, []);
 
   // 4. Real-time subscription to active conversation channel
   useEffect(() => {
@@ -812,6 +952,15 @@ export function ChatContainer({
         prev.map((m) => (m.id === tempId ? data.message : m))
       );
 
+      // Emit over Socket.io for sub-10ms delivery to conversation participants
+      const socket = getSocketClient();
+      if (socket && socket.connected) {
+        socket.emit("chat:message", {
+          conversationId: selectedConversationId,
+          message: data.message,
+        });
+      }
+
       // Update last message in sidebar and bring to top
       setConversations((prev) => {
         const target = prev.find((c) => c.id === selectedConversationId);
@@ -851,6 +1000,16 @@ export function ChatContainer({
         prev.map((m) => (m.id === messageId ? data.message : m))
       );
       setEditingMessage(null);
+
+      // Emit updated message over Socket.io
+      const socket = getSocketClient();
+      if (socket && socket.connected) {
+        socket.emit("chat:updated", {
+          conversationId: selectedConversationId,
+          message: data.message,
+        });
+      }
+
       toast.success("Message edited.");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error editing message";
@@ -876,6 +1035,16 @@ export function ChatContainer({
       setMessages((prev) =>
         prev.map((m) => (m.id === messageId ? data.message : m))
       );
+
+      // Emit deleted event over Socket.io
+      const socket = getSocketClient();
+      if (socket && socket.connected) {
+        socket.emit("chat:deleted", {
+          conversationId: selectedConversationId,
+          messageId,
+        });
+      }
+
       toast.success("Message deleted.");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error deleting message";
@@ -902,6 +1071,16 @@ export function ChatContainer({
         setMessages((prev) =>
           prev.map((m) => (m.id === messageId ? { ...m, reactions: data.reactions } : m))
         );
+
+        // Emit reaction event over Socket.io
+        const socket = getSocketClient();
+        if (socket && socket.connected) {
+          socket.emit("chat:reaction", {
+            conversationId: selectedConversationId,
+            messageId,
+            reactions: data.reactions,
+          });
+        }
       }
     } catch {
       // ignore reaction network error
@@ -1072,6 +1251,7 @@ export function ChatContainer({
 
             <MessageInput
               conversationId={activeConversation.id}
+              currentUser={currentUser}
               onSendMessage={handleSendMessage}
               replyingTo={replyingTo}
               onCancelReply={() => setReplyingTo(null)}

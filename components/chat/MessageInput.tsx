@@ -13,13 +13,15 @@ import {
   Square,
 } from "lucide-react";
 import { EmojiPicker } from "./EmojiPicker";
-import { MessageWithDetails } from "@/types";
+import { MessageWithDetails, UserSummary } from "@/types";
 import { formatFileSize, cn } from "@/lib/utils";
 import { useToast } from "@/components/providers/ToastProvider";
 import { playSendSound } from "@/lib/utils/sound";
+import { getSocketClient } from "@/lib/realtime/socket";
 
 interface MessageInputProps {
   conversationId: string;
+  currentUser?: UserSummary;
   onSendMessage: (payload: {
     content?: string;
     attachmentUrl?: string | null;
@@ -38,6 +40,7 @@ interface MessageInputProps {
 
 export function MessageInput({
   conversationId,
+  currentUser,
   onSendMessage,
   replyingTo,
   onCancelReply,
@@ -100,6 +103,18 @@ export function MessageInput({
     if (isTypingRef.current === isTyping) return;
     isTypingRef.current = isTyping;
 
+    // 1. Instant Socket.io emission
+    const socket = getSocketClient();
+    if (socket && socket.connected && currentUser) {
+      socket.emit("chat:typing", {
+        conversationId,
+        userId: currentUser.id,
+        userName: currentUser.name,
+        isTyping,
+      });
+    }
+
+    // 2. HTTP API fallback
     try {
       await fetch(`/api/conversations/${conversationId}/typing`, {
         method: "POST",

@@ -12,6 +12,8 @@ import {
   Maximize2,
   Minimize2,
   Monitor,
+  Volume2,
+  Volume1,
 } from "lucide-react";
 import {
   startRingtone,
@@ -116,6 +118,7 @@ export function CallModal({
   const [isSharingScreen, setIsSharingScreen] = useState(false);
   const [durationSeconds, setDurationSeconds] = useState(0);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [isLoudspeaker, setIsLoudspeaker] = useState(true);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -125,6 +128,13 @@ export function CallModal({
   const processedCandidatesCountRef = useRef(0);
   const callTimerRef = useRef<NodeJS.Timeout | null>(null);
   const ringtoneStopRef = useRef<(() => void) | null>(null);
+
+  // Web Audio API hardware mixer & speaker volume boost pipeline
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
+  const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const remoteMediaStreamRef = useRef<MediaStream | null>(null);
+
   const { toast } = useToast();
 
   // 1. Ringtone for incoming / calling with instant cleanup
@@ -185,9 +195,119 @@ export function CallModal({
     };
   }, [callStatus]);
 
+  // Setup dual audio pipeline: HTML5 Audio element + Web Audio API GainNode
+  const setupAudioPipeline = useCallback(
+    (stream: MediaStream) => {
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) return;
+
+      // Ensure every audio track is actively enabled
+      audioTracks.forEach((t) => {
+        t.enabled = true;
+      });
+
+      // 1. Direct HTML5 Audio element playback
+      if (remoteAudioRef.current) {
+        if (remoteAudioRef.current.srcObject !== stream) {
+          remoteAudioRef.current.srcObject = stream;
+        }
+        remoteAudioRef.current.volume = 1.0;
+        remoteAudioRef.current.play().catch((err) => {
+          console.warn("Direct HTML5 audio play error:", err);
+        });
+      }
+
+      // 2. Web Audio API hardware mixer + GainNode boost for loudspeaker/normal
+      try {
+        const AudioCtx =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (!AudioCtx) return;
+
+        if (!audioContextRef.current || audioContextRef.current.state === "closed") {
+          audioContextRef.current = new AudioCtx();
+        }
+
+        const ctx = audioContextRef.current;
+        if (ctx.state === "suspended") {
+          ctx.resume().catch(() => {});
+        }
+
+        if (audioSourceRef.current) {
+          try {
+            audioSourceRef.current.disconnect();
+          } catch {
+            // ignore
+          }
+          audioSourceRef.current = null;
+        }
+
+        if (!gainNodeRef.current) {
+          gainNodeRef.current = ctx.createGain();
+          gainNodeRef.current.connect(ctx.destination);
+        }
+
+        // 1.8x volume boost for Loudspeaker, 0.95x for Normal earpiece
+        gainNodeRef.current.gain.value = isLoudspeaker ? 1.8 : 0.95;
+
+        const source = ctx.createMediaStreamSource(stream);
+        audioSourceRef.current = source;
+        source.connect(gainNodeRef.current);
+      } catch (e) {
+        console.warn("Web Audio API setup notice:", e);
+      }
+    },
+    [isLoudspeaker]
+  );
+
+  // Toggle Loudspeaker / Normal audio mode
+  const toggleLoudspeaker = () => {
+    const next = !isLoudspeaker;
+    setIsLoudspeaker(next);
+    if (gainNodeRef.current && audioContextRef.current) {
+      try {
+        gainNodeRef.current.gain.setTargetAtTime(
+          next ? 1.8 : 0.95,
+          audioContextRef.current.currentTime,
+          0.05
+        );
+      } catch {
+        gainNodeRef.current.gain.value = next ? 1.8 : 0.95;
+      }
+    }
+    toast.info(
+      next ? "Loudspeaker Mode Activated" : "Normal Audio (Earpiece) Activated",
+      next ? "Loudspeaker ON" : "Normal Audio"
+    );
+  };
+
   // Clean up media tracks & peer connection on call end
   const cleanupStreams = useCallback(() => {
     stopAllRingtones();
+    if (audioSourceRef.current) {
+      try {
+        audioSourceRef.current.disconnect();
+      } catch {
+        // ignore
+      }
+      audioSourceRef.current = null;
+    }
+    if (gainNodeRef.current) {
+      try {
+        gainNodeRef.current.disconnect();
+      } catch {
+        // ignore
+      }
+      gainNodeRef.current = null;
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+      try {
+        audioContextRef.current.close();
+      } catch {
+        // ignore
+      }
+      audioContextRef.current = null;
+    }
     if (localStream) {
       localStream.getTracks().forEach((track) => track.stop());
       setLocalStream(null);
@@ -196,6 +316,7 @@ export function CallModal({
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
+    remoteMediaStreamRef.current = null;
     setRemoteStream(null);
   }, [localStream]);
 
@@ -209,31 +330,27 @@ export function CallModal({
   // Handle remote audio & video element binding
   useEffect(() => {
     if (remoteStream) {
-      if (remoteAudioRef.current) {
-        remoteAudioRef.current.srcObject = remoteStream;
-        remoteAudioRef.current.play().catch((err) => {
-          console.warn("Remote audio play notice:", err);
-        });
-      }
-      if (remoteVideoRef.current) {
+      setupAudioPipeline(remoteStream);
+      if (remoteVideoRef.current && callType === "VIDEO") {
         remoteVideoRef.current.srcObject = remoteStream;
         remoteVideoRef.current.play().catch((err) => {
           console.warn("Remote video play notice:", err);
         });
       }
     }
-  }, [remoteStream]);
+  }, [remoteStream, callType, setupAudioPipeline]);
 
   // 3. Initialize Outgoing Call PeerConnection (Caller side)
   const initOutgoingCall = useCallback(async () => {
     try {
-      // Pre-unlock audio element in user gesture for mobile devices
+      // Pre-unlock audio element in user gesture for mobile browsers
       if (remoteAudioRef.current) {
         remoteAudioRef.current.play().catch(() => {});
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
+          channelCount: 1, // Mono VoIP to prevent mobile stereo phase cancellation
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
@@ -253,19 +370,32 @@ export function CallModal({
         audioTransceiver.direction = "sendrecv";
       }
 
-      // Handle remote track with stream fallback
+      // Handle remote track with robust track accumulation
       pc.ontrack = (event) => {
-        let incomingStream = event.streams && event.streams[0];
-        if (!incomingStream) {
-          incomingStream = new MediaStream([event.track]);
+        if (!remoteMediaStreamRef.current) {
+          remoteMediaStreamRef.current = new MediaStream();
         }
-        setRemoteStream(incomingStream);
-        if (remoteAudioRef.current) {
-          remoteAudioRef.current.srcObject = incomingStream;
-          remoteAudioRef.current.play().catch((err) => {
-            console.warn("Direct ontrack audio play error:", err);
+        event.track.enabled = true;
+
+        const existingTracks = remoteMediaStreamRef.current.getTracks();
+        const existing = existingTracks.find((t) => t.kind === event.track.kind);
+        if (existing) {
+          remoteMediaStreamRef.current.removeTrack(existing);
+        }
+        remoteMediaStreamRef.current.addTrack(event.track);
+
+        if (event.streams && event.streams[0]) {
+          event.streams[0].getTracks().forEach((t) => {
+            t.enabled = true;
+            if (!remoteMediaStreamRef.current!.getTracks().some((cur) => cur.id === t.id)) {
+              remoteMediaStreamRef.current!.addTrack(t);
+            }
           });
         }
+
+        const activeRemote = remoteMediaStreamRef.current;
+        setRemoteStream(activeRemote);
+        setupAudioPipeline(activeRemote);
       };
 
       // Handle ICE candidates with smooth batching
@@ -293,8 +423,11 @@ export function CallModal({
         }
       };
 
-      // Create and send WebRTC offer
-      const offer = await pc.createOffer();
+      // Create and send WebRTC offer with explicit receive flags
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: callType === "VIDEO",
+      });
       await pc.setLocalDescription(offer);
 
       await onSendSignal({
@@ -308,7 +441,7 @@ export function CallModal({
       stopAllRingtones();
       onEndCall();
     }
-  }, [callType, otherUser.id, onSendSignal, onEndCall, toast]);
+  }, [callType, otherUser.id, onSendSignal, onEndCall, setupAudioPipeline, toast]);
 
   // Start outgoing call when in "calling" status
   useEffect(() => {
@@ -333,6 +466,7 @@ export function CallModal({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
+          channelCount: 1, // Mono VoIP to prevent mobile stereo phase cancellation
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
@@ -352,17 +486,30 @@ export function CallModal({
       }
 
       pc.ontrack = (event) => {
-        let incomingStream = event.streams && event.streams[0];
-        if (!incomingStream) {
-          incomingStream = new MediaStream([event.track]);
+        if (!remoteMediaStreamRef.current) {
+          remoteMediaStreamRef.current = new MediaStream();
         }
-        setRemoteStream(incomingStream);
-        if (remoteAudioRef.current) {
-          remoteAudioRef.current.srcObject = incomingStream;
-          remoteAudioRef.current.play().catch((err) => {
-            console.warn("Direct ontrack audio play error:", err);
+        event.track.enabled = true;
+
+        const existingTracks = remoteMediaStreamRef.current.getTracks();
+        const existing = existingTracks.find((t) => t.kind === event.track.kind);
+        if (existing) {
+          remoteMediaStreamRef.current.removeTrack(existing);
+        }
+        remoteMediaStreamRef.current.addTrack(event.track);
+
+        if (event.streams && event.streams[0]) {
+          event.streams[0].getTracks().forEach((t) => {
+            t.enabled = true;
+            if (!remoteMediaStreamRef.current!.getTracks().some((cur) => cur.id === t.id)) {
+              remoteMediaStreamRef.current!.addTrack(t);
+            }
           });
         }
+
+        const activeRemote = remoteMediaStreamRef.current;
+        setRemoteStream(activeRemote);
+        setupAudioPipeline(activeRemote);
       };
 
       let candidateBatch: RTCIceCandidateInit[] = [];
@@ -402,7 +549,10 @@ export function CallModal({
           }
         }
 
-        const answer = await pc.createAnswer();
+        const answer = await pc.createAnswer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: callType === "VIDEO",
+        });
         await pc.setLocalDescription(answer);
 
         await onSendSignal({
@@ -646,15 +796,8 @@ export function CallModal({
         ref={remoteAudioRef}
         autoPlay
         playsInline
-        style={{
-          position: "fixed",
-          top: -9999,
-          left: -9999,
-          width: "1px",
-          height: "1px",
-          opacity: 0.001,
-          pointerEvents: "none",
-        }}
+        className="sr-only"
+        aria-hidden="true"
       />
 
       {callStatus === "incoming" ? (
@@ -806,9 +949,19 @@ export function CallModal({
                     <span className="w-1 bg-emerald-400 rounded-full animate-bounce [animation-delay:0.1s] h-6" />
                     <span className="w-1 bg-emerald-400 rounded-full animate-bounce [animation-delay:0.25s] h-4" />
                   </div>
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    <span>Call Ongoing · {formatTimer(durationSeconds)}</span>
+                  <div className="flex items-center gap-2">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>Call Ongoing · {formatTimer(durationSeconds)}</span>
+                    </div>
+                    <span className="text-xs text-slate-300 flex items-center gap-1 bg-slate-900/80 px-2.5 py-1 rounded-full border border-slate-800">
+                      {isLoudspeaker ? (
+                        <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
+                      ) : (
+                        <Volume1 className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                      <span>{isLoudspeaker ? "Loudspeaker" : "Normal"}</span>
+                    </span>
                   </div>
                 </div>
               )}
@@ -849,6 +1002,26 @@ export function CallModal({
           title={isAudioMuted ? "Unmute Mic" : "Mute Mic"}
         >
           {isAudioMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+        </button>
+
+        {/* Toggle Loudspeaker / Normal Audio */}
+        <button
+          onClick={toggleLoudspeaker}
+          className={`p-3.5 rounded-2xl transition active:scale-95 flex items-center gap-1.5 ${
+            isLoudspeaker
+              ? "bg-indigo-600/30 text-indigo-400 border border-indigo-500/40 hover:bg-indigo-600/40"
+              : "bg-slate-800 hover:bg-slate-700 text-slate-300"
+          }`}
+          title={isLoudspeaker ? "Switch to Normal Audio (Earpiece)" : "Switch to Loudspeaker"}
+        >
+          {isLoudspeaker ? (
+            <Volume2 className="w-5 h-5 text-indigo-400" />
+          ) : (
+            <Volume1 className="w-5 h-5 text-slate-300" />
+          )}
+          <span className="text-xs font-semibold hidden md:inline">
+            {isLoudspeaker ? "Loudspeaker" : "Normal"}
+          </span>
         </button>
 
         {/* Toggle Camera (if Video call) */}

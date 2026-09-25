@@ -7,7 +7,12 @@ let socketInstance: Socket | null = null;
 export function getSocketClient(): Socket | null {
   if (typeof window === "undefined") return null;
 
-  const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL;
+  const socketUrl =
+    process.env.NEXT_PUBLIC_SOCKET_URL ||
+    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+      ? "http://localhost:4000"
+      : "");
+
   if (!socketUrl) return null;
 
   if (!socketInstance) {
