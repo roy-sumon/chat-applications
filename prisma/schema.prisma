@@ -125,3 +125,21 @@ model ReadReceipt {
   @@index([userId])
   @@index([messageId])
 }
+
+model CallSignal {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  conversationId String   @db.ObjectId
+  senderId       String   @db.ObjectId
+  targetUserId   String   @db.ObjectId
+  action         String
+  callType       String?
+  sdp            String?
+  candidate      String?
+  candidates     String?
+  reason         String?
+  createdAt      DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([targetUserId, createdAt])
+}
+

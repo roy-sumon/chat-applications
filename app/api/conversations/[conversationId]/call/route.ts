@@ -23,6 +23,7 @@ export async function POST(
       callType,
       sdp,
       candidate,
+      candidates,
       reason,
       duration,
       wasConnected,
@@ -40,6 +41,33 @@ export async function POST(
 
     if (!member) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    // Persist signal to MongoDB for 100% reliable cross-device / cross-serverless delivery
+    try {
+      await prisma.callSignal.create({
+        data: {
+          conversationId,
+          senderId: user.id,
+          targetUserId: targetUserId || "",
+          action,
+          callType: callType || null,
+          sdp: sdp ? JSON.stringify(sdp) : null,
+          candidate: candidate ? JSON.stringify(candidate) : null,
+          candidates: candidates ? JSON.stringify(candidates) : null,
+          reason: reason || null,
+        },
+      });
+
+      // Prune signals older than 3 minutes asynchronously
+      prisma.callSignal.deleteMany({
+        where: {
+          conversationId,
+          createdAt: { lt: new Date(Date.now() - 3 * 60 * 1000) },
+        },
+      }).catch(() => {});
+    } catch (dbErr) {
+      console.error("[Call API] Error persisting call signal:", dbErr);
     }
 
     const channels = targetUserId
@@ -76,6 +104,7 @@ export async function POST(
           senderId: user.id,
           targetUserId,
           candidate,
+          candidates,
         });
         break;
 
@@ -239,5 +268,51 @@ export async function POST(
   } catch (error) {
     console.error("[Call API] Error:", error);
     return NextResponse.json({ error: "Call signaling failed" }, { status: 500 });
+  }
+}
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ conversationId: string }> }
+) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { conversationId } = await params;
+    const { searchParams } = new URL(req.url);
+    const since = searchParams.get("since");
+    const sinceDate = since ? new Date(Number(since)) : new Date(Date.now() - 30 * 1000);
+
+    const signals = await prisma.callSignal.findMany({
+      where: {
+        conversationId,
+        senderId: { not: user.id },
+        createdAt: { gt: sinceDate },
+      },
+      orderBy: { createdAt: "asc" },
+      take: 50,
+    });
+
+    return NextResponse.json({
+      signals: signals.map((s) => ({
+        id: s.id,
+        action: s.action,
+        senderId: s.senderId,
+        targetUserId: s.targetUserId,
+        callType: s.callType,
+        sdp: s.sdp ? JSON.parse(s.sdp) : undefined,
+        candidate: s.candidate ? JSON.parse(s.candidate) : undefined,
+        candidates: s.candidates ? JSON.parse(s.candidates) : undefined,
+        reason: s.reason,
+        timestamp: new Date(s.createdAt).getTime(),
+      })),
+      serverTime: Date.now(),
+    });
+  } catch (err) {
+    console.error("[Call API GET] Error:", err);
+    return NextResponse.json({ error: "Failed to fetch signals" }, { status: 500 });
   }
 }

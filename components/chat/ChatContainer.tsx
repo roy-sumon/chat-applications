@@ -32,6 +32,7 @@ import { playReceiveSound, stopAllRingtones } from "@/lib/utils/sound";
 import { MessageSquare, Trash2, AlertTriangle, Loader2 } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { getSocketClient } from "@/lib/realtime/socket";
 
 interface ChatContainerProps {
   initialUser: UserSummary;
@@ -109,7 +110,7 @@ export function ChatContainer({
     (c) => c.id === selectedConversationId
   );
 
-  // WebRTC Call Signaling sender
+  // WebRTC Call Signaling sender (Dual: Socket.io instant WebSocket + MongoDB HTTP fallback)
   const handleSendCallSignal = useCallback(
     async (payload: {
       action: "offer" | "answer" | "ice-candidate" | "reject" | "missed" | "end";
@@ -117,6 +118,7 @@ export function ChatContainer({
       callType?: "AUDIO" | "VIDEO";
       sdp?: RTCSessionDescriptionInit;
       candidate?: RTCIceCandidateInit;
+      candidates?: RTCIceCandidateInit[];
       reason?: string;
       duration?: number;
       wasConnected?: boolean;
@@ -124,6 +126,17 @@ export function ChatContainer({
       const convId = callConversationId || selectedConversationId;
       if (!convId) return;
 
+      // 1. Emit via Socket.io if available for instant sub-10ms delivery
+      const socket = getSocketClient();
+      if (socket && socket.connected) {
+        socket.emit("call-signal", {
+          ...payload,
+          conversationId: convId,
+          senderId: currentUser.id,
+        });
+      }
+
+      // 2. Also send via API for database persistence & multi-device fallback
       try {
         await fetch(`/api/conversations/${convId}/call`, {
           method: "POST",
@@ -134,8 +147,68 @@ export function ChatContainer({
         console.error("Failed to send call signal:", err);
       }
     },
-    [callConversationId, selectedConversationId]
+    [callConversationId, selectedConversationId, currentUser.id]
   );
+
+  // Register user on Socket.io if configured
+  useEffect(() => {
+    const socket = getSocketClient();
+    if (!socket || !currentUser.id) return;
+
+    socket.emit("register-user", currentUser.id);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handleIncomingSocketSignal = (data: any) => {
+      if (!data) return;
+      if (data.senderId === currentUser.id) return;
+
+      if (data.action === "offer") {
+        if (callStatusRef.current !== "idle") return;
+        setCallConversationId(data.conversationId);
+        setCallingTarget({
+          id: data.senderId,
+          name: data.caller?.name || "User",
+          avatar: data.caller?.avatar,
+        });
+        setActiveCallType((data.callType as "AUDIO" | "VIDEO") || "VIDEO");
+        setIncomingOfferSdp(data.sdp);
+        setCallStatus("incoming");
+      } else if (data.action === "answer") {
+        stopAllRingtones();
+        setRemoteAnswerSdp(data.sdp);
+        setCallStatus("connected");
+      } else if (data.action === "ice-candidate") {
+        const cands = data.candidates || (data.candidate ? [data.candidate] : []);
+        if (cands.length > 0) {
+          setPendingIceCandidates((prev) => [...prev, ...cands]);
+        }
+      } else if (data.action === "reject") {
+        stopAllRingtones();
+        toast.error(data.reason || "The call was declined.", "Call Declined");
+        setCallStatus("idle");
+        setCallingTarget(null);
+        setIncomingOfferSdp(null);
+        setRemoteAnswerSdp(null);
+        setPendingIceCandidates([]);
+        setCallConversationId(null);
+      } else if (data.action === "end") {
+        stopAllRingtones();
+        toast.info("Call ended by remote user.", "Call Ended");
+        setCallStatus("idle");
+        setCallingTarget(null);
+        setIncomingOfferSdp(null);
+        setRemoteAnswerSdp(null);
+        setPendingIceCandidates([]);
+        setCallConversationId(null);
+      }
+    };
+
+    socket.on("call-signal", handleIncomingSocketSignal);
+
+    return () => {
+      socket.off("call-signal", handleIncomingSocketSignal);
+    };
+  }, [currentUser.id, toast]);
 
   const handleStartCall = useCallback(
     (type: "AUDIO" | "VIDEO") => {
@@ -458,8 +531,9 @@ export function ChatContainer({
 
     channel.bind(REALTIME_EVENTS.CALL_ICE_CANDIDATE, (data: CallIceCandidatePayload) => {
       if (data.senderId && data.senderId === currentUser.id) return;
-      if (data.candidate) {
-        setPendingIceCandidates((prev) => [...prev, data.candidate]);
+      const cands = data.candidates || (data.candidate ? [data.candidate] : []);
+      if (cands.length > 0) {
+        setPendingIceCandidates((prev) => [...prev, ...cands]);
       }
     });
 
@@ -609,8 +683,9 @@ export function ChatContainer({
     // WebRTC: Remote ICE Candidate
     userChannel.bind(REALTIME_EVENTS.CALL_ICE_CANDIDATE, (data: CallIceCandidatePayload) => {
       if (data.senderId && data.senderId === currentUser.id) return;
-      if (data.candidate) {
-        setPendingIceCandidates((prev) => [...prev, data.candidate]);
+      const cands = data.candidates || (data.candidate ? [data.candidate] : []);
+      if (cands.length > 0) {
+        setPendingIceCandidates((prev) => [...prev, ...cands]);
       }
     });
 

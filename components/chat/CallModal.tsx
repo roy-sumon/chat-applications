@@ -28,6 +28,9 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
     { urls: "stun:stun3.l.google.com:19302" },
+    { urls: "stun:stun4.l.google.com:19302" },
+    { urls: "stun:global.stun.twilio.com:3478" },
+    { urls: "stun:stun.cloudflare.com:3478" },
     { urls: "stun:openrelay.metered.ca:80" },
     {
       urls: "turn:openrelay.metered.ca:80",
@@ -41,6 +44,11 @@ const ICE_SERVERS: RTCConfiguration = {
     },
     {
       urls: "turn:openrelay.metered.ca:443?transport=tcp",
+      username: "openrelay",
+      credential: "openrelay",
+    },
+    {
+      urls: "turns:openrelay.metered.ca:443?transport=tcp",
       username: "openrelay",
       credential: "openrelay",
     },
@@ -76,6 +84,7 @@ interface CallModalProps {
     callType?: "AUDIO" | "VIDEO";
     sdp?: RTCSessionDescriptionInit;
     candidate?: RTCIceCandidateInit;
+    candidates?: RTCIceCandidateInit[];
     reason?: string;
     duration?: number;
     wasConnected?: boolean;
@@ -86,6 +95,7 @@ interface CallModalProps {
 }
 
 export function CallModal({
+  conversationId,
   otherUser,
   callType,
   callStatus,
@@ -258,14 +268,28 @@ export function CallModal({
         }
       };
 
-      // Handle ICE candidates
+      // Handle ICE candidates with smooth batching
+      let candidateBatch: RTCIceCandidateInit[] = [];
+      let batchTimer: NodeJS.Timeout | null = null;
+
       pc.onicecandidate = (event) => {
         if (event.candidate) {
-          onSendSignal({
-            action: "ice-candidate",
-            targetUserId: otherUser.id,
-            candidate: event.candidate.toJSON(),
-          });
+          candidateBatch.push(event.candidate.toJSON());
+          if (!batchTimer) {
+            batchTimer = setTimeout(() => {
+              batchTimer = null;
+              const toSend = [...candidateBatch];
+              candidateBatch = [];
+              if (toSend.length > 0) {
+                onSendSignal({
+                  action: "ice-candidate",
+                  targetUserId: otherUser.id,
+                  candidate: toSend[0],
+                  candidates: toSend,
+                });
+              }
+            }, 100);
+          }
         }
       };
 
@@ -341,13 +365,27 @@ export function CallModal({
         }
       };
 
+      let candidateBatch: RTCIceCandidateInit[] = [];
+      let batchTimer: NodeJS.Timeout | null = null;
+
       pc.onicecandidate = (event) => {
         if (event.candidate) {
-          onSendSignal({
-            action: "ice-candidate",
-            targetUserId: otherUser.id,
-            candidate: event.candidate.toJSON(),
-          });
+          candidateBatch.push(event.candidate.toJSON());
+          if (!batchTimer) {
+            batchTimer = setTimeout(() => {
+              batchTimer = null;
+              const toSend = [...candidateBatch];
+              candidateBatch = [];
+              if (toSend.length > 0) {
+                onSendSignal({
+                  action: "ice-candidate",
+                  targetUserId: otherUser.id,
+                  candidate: toSend[0],
+                  candidates: toSend,
+                });
+              }
+            }, 100);
+          }
         }
       };
 
@@ -428,6 +466,70 @@ export function CallModal({
       }
     });
   }, [pendingIceCandidates, pendingIceCandidate]);
+
+  // 6.5 Active Signaling Sync for Cross-Network & Serverless Handshake
+  useEffect(() => {
+    if (callStatus === "idle" || callStatus === "ended") return;
+    if (callStatus === "connected" && remoteStream) return;
+
+    let isMounted = true;
+    let lastPollTime = Date.now() - 30000;
+
+    const interval = setInterval(async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      try {
+        const res = await fetch(
+          `/api/conversations/${conversationId}/call?since=${lastPollTime}`
+        );
+        if (!res.ok || !isMounted) return;
+        const data = await res.json();
+        if (data.serverTime) lastPollTime = data.serverTime;
+
+        if (data.signals && Array.isArray(data.signals)) {
+          for (const sig of data.signals) {
+            if (sig.senderId === otherUser.id) {
+              if (sig.action === "answer" && sig.sdp && peerConnectionRef.current) {
+                const pc = peerConnectionRef.current;
+                if (pc.signalingState === "have-local-offer") {
+                  stopAllRingtones();
+                  await pc.setRemoteDescription(new RTCSessionDescription(sig.sdp)).catch(() => {});
+                  while (iceCandidateQueueRef.current.length > 0) {
+                    const queued = iceCandidateQueueRef.current.shift();
+                    if (queued && peerConnectionRef.current) {
+                      await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(queued)).catch(() => {});
+                    }
+                  }
+                }
+              } else if (sig.action === "ice-candidate") {
+                const cands = sig.candidates || (sig.candidate ? [sig.candidate] : []);
+                for (const c of cands) {
+                  const pc = peerConnectionRef.current;
+                  if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+                    await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
+                  } else {
+                    iceCandidateQueueRef.current.push(c);
+                  }
+                }
+              } else if (sig.action === "reject" || sig.action === "end") {
+                stopAllRingtones();
+                playCallEndSound();
+                cleanupStreams();
+                onEndCall({ wasConnected: callStatus === "connected", duration: durationSeconds });
+                return;
+              }
+            }
+          }
+        }
+      } catch {
+        // silent
+      }
+    }, 380);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [callStatus, conversationId, otherUser.id, remoteStream, cleanupStreams, durationSeconds, onEndCall]);
 
   // 7. Toggle Audio Mute
   const toggleAudio = () => {

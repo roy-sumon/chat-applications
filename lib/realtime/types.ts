@@ -63,7 +63,8 @@ export interface CallIceCandidatePayload {
   conversationId: string;
   senderId?: string;
   targetUserId?: string;
-  candidate: RTCIceCandidateInit;
+  candidate?: RTCIceCandidateInit;
+  candidates?: RTCIceCandidateInit[];
 }
 
 export interface CallRejectPayload {

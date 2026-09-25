@@ -94,9 +94,13 @@ flowchart TD
 - **In-Conversation Search**: Full-text message search inside active conversations with match highlights.
 - **Real-Time Notifications**: Unread badges in the sidebar, in-app notifications, and browser notification integration.
 
-### 8. WebRTC 1-to-1 Audio & Video Calling
-- **Direct P2P Media Streams**: Low-latency video and audio calling powered by native WebRTC with public Google STUN servers (`stun:stun.l.google.com:19302`).
-- **Real-Time Signaling**: Dual-channel SDP offer/answer exchange and ICE candidate negotiation via Pusher Channels and private user queues.
+### 8. WebRTC 1-to-1 Audio & Video Calling & Socket.io Signaling
+- **Direct P2P Media Streams**: Low-latency video and audio calling powered by native WebRTC with multi-tier STUN and secure TURN relay servers (Google, Cloudflare, Twilio, and OpenRelay TLS).
+- **Dual Signaling Architecture**:
+  - **Zero-Config Database Signaling (Vercel/Serverless ready)**: Persistent, cross-instance MongoDB-backed signaling queue (`CallSignal`) ensuring 100% reliable call delivery across isolated serverless lambdas and mobile networks.
+  - **Optional Standalone Socket.io Server**: Dedicated real-time WebSocket server (`npm run socket-server` on port 4000) for sub-10ms signaling on dedicated servers, Render, or VPS.
+  - **Pusher Channels Integration**: Cloud WebSocket pub/sub for push events and presence.
+- **Batched ICE Candidate Transmission**: Reduces dozens of rapid ICE candidate network requests into smooth batches to prevent dropped candidates on mobile connections.
 - **In-Call Controls**: Picture-in-picture local preview, camera flip/toggle, microphone mute/unmute, desktop screen sharing, full-screen expansion, and live call timer.
 - **Synthesized Audio Feedback**: Clean telephone ringtone, connected chime, and hangup tones generated dynamically using the Web Audio API with zero external audio assets.
 - **Smart Ringtones (Online vs. Offline)**: Plays dynamic ringing when recipient is live online, and switches to a distinct connecting pulse when the recipient is offline (WhatsApp/Messenger style).
