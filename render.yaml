@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: pulse-chat
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install && npx prisma generate && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.0
+      - key: NODE_ENV
+        value: production
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: AUTH_TRUST_HOST
+        value: "true"
+      - key: DATABASE_URL
+        sync: false
+      - key: NEXTAUTH_URL
+        fromService:
+          type: web
+          name: pulse-chat
+          property: host
+      - key: NEXT_PUBLIC_APP_URL
+        fromService:
+          type: web
+          name: pulse-chat
+          property: host
+      - key: REALTIME_PROVIDER
+        value: pusher
+      - key: PUSHER_APP_ID
+        sync: false
+      - key: PUSHER_SECRET
+        sync: false
+      - key: NEXT_PUBLIC_PUSHER_KEY
+        sync: false
+      - key: NEXT_PUBLIC_PUSHER_CLUSTER
+        value: mt1

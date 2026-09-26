@@ -9,9 +9,7 @@ export function getSocketClient(): Socket | null {
 
   const socketUrl =
     process.env.NEXT_PUBLIC_SOCKET_URL ||
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
-      ? "http://localhost:4000"
-      : "");
+    (typeof window !== "undefined" ? window.location.origin : "");
 
   if (!socketUrl) return null;
 
